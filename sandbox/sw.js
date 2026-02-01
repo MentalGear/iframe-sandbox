@@ -1,8 +1,8 @@
-const CACHE_NAME = "sandbox-cache-v1"
+const CACHE_NAME = "sandbox-cache-v3"
 const ASSETS_TO_CACHE = [
     "/sandbox/index.html",
     "/sandbox/executor.html",
-    // maybe sw.js itself is handled by browser
+    "/sandbox/sw.js",
 ]
 
 self.addEventListener("install", (event) => {
@@ -17,8 +17,22 @@ self.addEventListener("install", (event) => {
 })
 
 self.addEventListener("activate", (event) => {
-    console.log("[SW] Activating...")
-    event.waitUntil(clients.claim())
+    console.log(`[SW] Activating ${CACHE_NAME}...`)
+    event.waitUntil(
+        caches
+            .keys()
+            .then((cacheNames) => {
+                return Promise.all(
+                    cacheNames.map((cacheName) => {
+                        if (cacheName !== CACHE_NAME) {
+                            console.log(`[SW] Deleting old cache: ${cacheName}`)
+                            return caches.delete(cacheName)
+                        }
+                    }),
+                )
+            })
+            .then(() => clients.claim()),
+    )
 })
 
 self.addEventListener("fetch", (event) => {

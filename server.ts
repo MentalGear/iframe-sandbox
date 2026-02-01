@@ -15,55 +15,44 @@ serve({
 
         // Router
         if (path === "/" || path === "/index.html") {
-            // If accessed via localhost, serve client (Host)
-            // If accessed via 127.0.0.1, serve sandbox (for direct testing, though usually accessed via iframe)
-            // Actually, to keep it simple, let's explicitely route:
-            // localhost:3333/ -> client/index.html
-            // But the sandbox iframe is loaded via 127.0.0.1:3333/sandbox/index.html
             path = "/client/index.html"
+        } else if (path === "/sw.js") {
+            path = "/client/sw.js"
         }
 
-        // Serve static files
-        // Security: Only allow serving from client/ and sandbox/ folders to prevent directory traversal
-        let filePath
-        if (path.startsWith("/client/")) {
-            filePath = join(process.cwd(), path)
-        } else if (path.startsWith("/sandbox/")) {
-            filePath = join(process.cwd(), path)
-        } else {
-            return new Response("Not Found", { status: 404 })
+        console.log(`[Server] ${req.method} ${url.pathname} -> ${path}`)
+
+        // Security: Avoid serving sensitive files
+        if (path.includes("..") || path.includes(".env")) {
+            return new Response("Forbidden", { status: 403 })
         }
 
+        // Resolve file path
+        const filePath = join(process.cwd(), path)
         const file = Bun.file(filePath)
+
         if (await file.exists()) {
-            const headers = new Headers()
-            headers.set("Content-Type", file.type)
-            headers.set(
-                "Cache-Control",
-                "no-store, no-cache, must-revalidate, proxy-revalidate",
-            )
-            headers.set("Pragma", "no-cache")
-            headers.set("Expires", "0")
+            const responseHeaders: Record<string, string> = {
+                "Content-Type": file.type,
+                "Cache-Control": "no-store, no-cache, must-revalidate",
+            }
 
             // Security: Add CSP
             if (path.startsWith("/sandbox/")) {
-                // Sandbox needs scripts and same-origin to allow Service Worker
-                headers.set(
-                    "Content-Security-Policy",
-                    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';",
-                )
-            } else {
-                // Host CSP: Allows loading iframe from 127.0.0.1
-                headers.set(
-                    "Content-Security-Policy",
-                    "default-src 'self' http://127.0.0.1:3333; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-src http://127.0.0.1:3333;",
-                )
+                responseHeaders["Content-Security-Policy"] =
+                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';"
+            } else if (path.startsWith("/client/")) {
+                responseHeaders["Content-Security-Policy"] =
+                    "default-src 'self' http://127.0.0.1:3333; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-src http://127.0.0.1:3333;"
             }
 
-            return new Response(file, { headers })
+            console.log(
+                `[Server] CSP: ${responseHeaders["Content-Security-Policy"] || "none"}`,
+            )
+            return new Response(file, { headers: responseHeaders })
         }
 
-        console.log(`404: ${path}`)
+        console.log(`[Server] 404: ${path}`)
         return new Response("Not Found", { status: 404 })
     },
 })

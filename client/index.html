@@ -44,6 +44,7 @@
             margin-bottom: 20px;
             background: linear-gradient(135deg, var(--accent), #ff8a80);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             margin-top: 0;
         }
@@ -142,6 +143,7 @@ fetch('/secret.txt')
 
     <h3>Host Message Logs</h3>
     <div id="logs">Waiting for logs from sandbox...</div>
+    <div id="host-sw-status" style="position: fixed; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); color: white; padding: 4px 8px; font-size: 11px; pointer-events: none; border-radius: 4px; font-family: monospace;">Host SW: disconnected</div>
 
     <script>
         const sandbox = document.getElementById('sandboxFrame');
@@ -177,6 +179,30 @@ fetch('/secret.txt')
             
             logsDiv.prepend(div);
         });
+        
+        // Register Host Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' })
+                .then(reg => {
+                    const statusEl = document.getElementById('host-sw-status');
+                    const checkState = () => {
+                        if (reg.active) {
+                            statusEl.textContent = 'Host SW: active';
+                            statusEl.style.backgroundColor = '#4caf50';
+                        } else {
+                            statusEl.textContent = 'Host SW: installing...';
+                            setTimeout(checkState, 200);
+                        }
+                    };
+                    checkState();
+                })
+                .catch(err => {
+                    console.error("Host SW Registration failed:", err);
+                    const statusEl = document.getElementById('host-sw-status');
+                    statusEl.textContent = 'Host SW: error';
+                    statusEl.style.backgroundColor = '#ff5252';
+                });
+        }
 
         function runCode() {
             const code = document.getElementById('code').value;
