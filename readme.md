@@ -2,6 +2,14 @@
 
 A production-pattern Minimum Reproducible Example (MRE) of a secure, isolated JavaScript sandbox using iFrame origin isolation and Service Worker network interception.
 
+## FUTURE WORK
+
+[] Compare to https://github.com/google/playground-elements?tab=readme-ov-file#playground-preview
+    - Which is better, just use google preview by itself ?
+[] automatic security check on init
+[] pass this security list https://jscrambler.com/blog/improving-iframe-security
+[] make a lib out of this, use web component
+
 ## Core Features
 - **Origin Isolation**: Uses `localhost` vs `127.0.0.1` to create a strict security boundary.
 - **Network Interception**: A Service Worker manages and intercepts all requests from the sandbox.
