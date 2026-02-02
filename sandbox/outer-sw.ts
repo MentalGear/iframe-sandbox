@@ -21,7 +21,7 @@ interface LogMessage {
 
 interface NetworkRules {
     allow?: string[]
-    useProxy?: boolean
+    proxyUrl?: string // e.g., '/_proxy' or 'https://proxy.example.com'
     files?: Record<string, string>
     cacheStrategy?: "network-first" | "cache-first" | "network-only"
 }
@@ -102,7 +102,7 @@ const CACHE_STRATEGY = params.get("strategy") || "network-first"
 
 let networkRules: NetworkRules = {
     allow: [],
-    useProxy: false,
+    proxyUrl: undefined,
     files: {},
     cacheStrategy: "network-first",
 }
@@ -122,7 +122,7 @@ self.addEventListener("message", (event) => {
     if (event.data?.type === "SET_NETWORK_RULES") {
         networkRules = {
             allow: event.data.rules?.allow ?? [],
-            useProxy: event.data.rules?.useProxy ?? false,
+            proxyUrl: event.data.rules?.proxyUrl ?? undefined,
             files: event.data.rules?.files ?? {},
             cacheStrategy: event.data.rules?.cacheStrategy ?? "network-first",
         }
@@ -180,12 +180,18 @@ self.addEventListener("fetch", (event) => {
             )
 
             if (isAllowed) {
-                if (networkRules.useProxy) {
-                    const hostOrigin = self.location.origin.replace(
-                        "sandbox.",
-                        "",
-                    )
-                    const proxyUrl = `${hostOrigin}/_proxy?url=${encodeURIComponent(event.request.url)}`
+                if (networkRules.proxyUrl) {
+                    // Build proxy URL - support relative and absolute paths
+                    let proxyBase = networkRules.proxyUrl
+                    if (proxyBase.startsWith("/")) {
+                        // Relative path - prepend host origin
+                        const hostOrigin = self.location.origin.replace(
+                            "sandbox.",
+                            "",
+                        )
+                        proxyBase = hostOrigin + proxyBase
+                    }
+                    const proxyUrl = `${proxyBase}?url=${encodeURIComponent(event.request.url)}`
 
                     await ipc.send(
                         "log",
@@ -231,8 +237,9 @@ self.addEventListener("fetch", (event) => {
                     )
                     let message = errorDetails.message as string
 
-                    if (!networkRules.useProxy) {
-                        message += " (Try useProxy: true)"
+                    if (!networkRules.proxyUrl) {
+                        message +=
+                            " (Try adding a proxyUrl and ensure that server route handle/changes the CORS headers accordingly.)"
                     }
 
                     await ipc.send(

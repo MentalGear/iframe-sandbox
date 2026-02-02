@@ -22,7 +22,6 @@ A secure JavaScript sandbox Custom Element featuring subdomain isolation, networ
   sandbox.addEventListener('ready', () => {
     sandbox.setNetworkRules({
       allow: ['api.example.com'],
-      useProxy: false,
       files: { '/config.json': '{"key": "value"}' }
     });
     
@@ -78,7 +77,7 @@ sandbox.setNetworkRules(rules)    // Set network rules
 ```ts
 interface NetworkRules {
   allow?: string[]              // Allowed domains (default: [])
-  useProxy?: boolean            // Use CORS proxy (default: false)
+  proxyUrl?: string             // (e.g., '/_proxy') url of a server that changes CORS headers of a request and passes them to the sandbox. Important: you should be in control of this.
   files?: Record<string, string> // Virtual files (default: {})
   cacheStrategy?: 'network-first' | 'cache-first' | 'network-only'
 }

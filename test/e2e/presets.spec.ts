@@ -50,7 +50,7 @@ test.describe("JSONPlaceholder Preset", () => {
 
         await setupSandbox(page, {
             allow: ["jsonplaceholder.typicode.com"],
-            useProxy: false,
+            proxyUrl: undefined,
             files: {},
         })
 
@@ -74,7 +74,7 @@ test.describe("Google Preset", () => {
 
         await setupSandbox(page, {
             allow: ["www.google.com"],
-            useProxy: false,
+            proxyUrl: undefined,
             files: {},
         })
 
@@ -86,7 +86,7 @@ test.describe("Google Preset", () => {
 
         // Should see error (502 or CORS failure)
         await expect(page.locator("#logs")).toContainText(
-            /502|CORS|error|useProxy/i,
+            /502|CORS|error|proxyUrl/i,
         )
     })
 
@@ -95,7 +95,7 @@ test.describe("Google Preset", () => {
 
         await setupSandbox(page, {
             allow: ["www.google.com"],
-            useProxy: true,
+            proxyUrl: "/_proxy",
             files: {},
         })
 
@@ -119,7 +119,7 @@ test.describe("Block All Preset", () => {
 
         await setupSandbox(page, {
             allow: [],
-            useProxy: false,
+            proxyUrl: undefined,
             files: {},
         })
 
@@ -142,7 +142,7 @@ test.describe("Virtual Files", () => {
 
         await setupSandbox(page, {
             allow: [],
-            useProxy: false,
+            proxyUrl: undefined,
             files: { "/virtual.txt": virtualContent },
         })
 
@@ -192,7 +192,7 @@ test.describe("Log Message Schema", () => {
 
         await setupSandbox(page, {
             allow: ["jsonplaceholder.typicode.com"],
-            useProxy: false,
+            proxyUrl: undefined,
             files: {},
         })
 

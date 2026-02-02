@@ -5,7 +5,7 @@
 
 interface NetworkRules {
     allow?: string[]
-    useProxy?: boolean
+    proxyUrl?: string // e.g., '/_proxy' or 'https://proxy.example.com'
     files?: Record<string, string>
     cacheStrategy?: "network-first" | "cache-first" | "network-only"
 }

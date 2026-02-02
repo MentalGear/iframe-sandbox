@@ -203,11 +203,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             </div>
             <textarea id="rulesEditor" oninput="onRulesInput()" style="height: 150px; font-family: monospace; background: #1a1a1a;">
 {
-  "allow": ["jsonplaceholder.typicode.com"],
-  "useProxy": false,
-  "files": {
-    "/virtual.txt": "Virtual content here."
-  }
+  "allow": ["jsonplaceholder.typicode.com"]
 }
 </textarea>
 
@@ -302,7 +298,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
 
         const PRESETS = {
             jsonplaceholder: {
-                rules: { allow: ['jsonplaceholder.typicode.com'], useProxy: false },
+                rules: { allow: ['jsonplaceholder.typicode.com'] },
                 code: `// JSONPlaceholder - CORS-friendly API
 console.log("Fetching from JSONPlaceholder...");
 fetch("https://jsonplaceholder.typicode.com/todos/1")
@@ -310,7 +306,7 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(data => console.log("Got:", data));`
             },
             google: {
-                rules: { allow: ['www.google.com'], useProxy: true },
+                rules: { allow: ['www.google.com'], proxyUrl: '/_proxy' },
                 code: `// Google - Needs CORS proxy
 console.log("Fetching Google via proxy...");
 fetch("https://www.google.com")
@@ -387,8 +383,9 @@ setTimeout(() => {
                 // Keep UI toggle in sync
                 const proxyToggle = document.getElementById('proxyToggle');
                 if (proxyToggle) {
-                    proxyToggle.style.background = rules.useProxy ? 'var(--primary)' : '#444';
-                    proxyToggle.textContent = `Proxy: ${rules.useProxy ? 'ON' : 'OFF'}`;
+                    const hasProxy = !!rules.proxyUrl;
+                    proxyToggle.style.background = hasProxy ? 'var(--primary)' : '#444';
+                    proxyToggle.textContent = `Proxy: ${hasProxy ? 'ON' : 'OFF'}`;
                 }
             } catch (e) {
                 // Silently wait for valid JSON during typing
@@ -406,20 +403,23 @@ setTimeout(() => {
         window.toggleProxy = () => {
             try {
                 const rules = JSON.parse(document.getElementById('rulesEditor').value);
-                rules.useProxy = !rules.useProxy;
+                // Toggle: if has proxyUrl, remove it; else add default
+                if (rules.proxyUrl) {
+                    delete rules.proxyUrl;
+                } else {
+                    rules.proxyUrl = '/_proxy';
+                }
                 document.getElementById('rulesEditor').value = JSON.stringify(rules, null, 2);
                 
                 const proxyToggle = document.getElementById('proxyToggle');
-                proxyToggle.style.background = rules.useProxy ? 'var(--primary)' : '#444';
-                proxyToggle.textContent = `Proxy: ${rules.useProxy ? 'ON' : 'OFF'}`;
+                const hasProxy = !!rules.proxyUrl;
+                proxyToggle.style.background = hasProxy ? 'var(--primary)' : '#444';
+                proxyToggle.textContent = `Proxy: ${hasProxy ? 'ON' : 'OFF'}`;
                 
-                appendLocalLog(`Proxy: ${rules.useProxy ? 'ON' : 'OFF'}`);
+                appendLocalLog(`Proxy: ${hasProxy ? '/_proxy' : 'OFF'}`);
                 
-                // Trigger custom and save
                 playground.triggerCustomMode();
                 playground.saveState();
-
-                // Apply immediately
                 sandbox.setNetworkRules(rules);
             } catch (e) {
                 appendLocalLog('Invalid JSON in rules editor.');
