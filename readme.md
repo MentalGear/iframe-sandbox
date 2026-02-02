@@ -45,8 +45,33 @@ Sandbox (sandbox.localhost:3333)
     +-- outer-frame.html     # SW registration, message relay
     +-- inner-frame.html     # Code execution
     +-- outer-sw.ts          # Network firewall
-    +-- ipc.ts               # Messaging utilities
 ```
+
+## How It Works
+
+```
+Host Page
+    |
+    +-- <safe-sandbox> (Custom Element)
+            |
+            +-- iframe[sandbox] -> outer-frame.html (sandbox.localhost)
+                    |
+                    +-- Registers Service Worker (outer-sw.ts)
+                    +-- iframe (no sandbox attr) -> inner-frame.html
+                            |
+                            +-- User code runs here (eval)
+                            +-- All fetch() intercepted by SW
+```
+
+**Double iframe design:**
+1. **Outer frame** (`outer-frame.html`): Has `sandbox` attribute restricting capabilities. Registers the Service Worker (SW) and relays messages between host and inner frame.
+2. **Inner frame** (`inner-frame.html`): No sandbox attribute (inherits origin isolation). Executes user code via `eval()`. Console is proxied to send logs to parent.
+
+**Why this works:**
+- The subdomain (`sandbox.localhost`) provides full origin isolation - no access to host (main top-level window) cookies, storage, or DOM
+- The Service Worker (SW) intercepts all network requests from both frames, enforcing the allowlist
+- CSP `connect-src *` lets the SW make any request, then SW decides what's actually allowed
+- Messages flow: Host <-> Outer Frame <-> Inner Frame, with strict origin checks
 
 ## API
 
