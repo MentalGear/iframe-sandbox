@@ -1,54 +1,119 @@
-const CACHE_NAME = "sandbox-cache-v1"
+const CACHE_NAME = "sandbox-cache-v7"
 const ASSETS_TO_CACHE = [
     "/sandbox/index.html",
     "/sandbox/executor.html",
-    // maybe sw.js itself is handled by browser
+    "/sandbox/sw.js",
 ]
 
+// Ephemeral Rules Store (In-Memory)
+// Resets to "Block All" whenever the Service Worker restarts.
+let networkRules = {
+    allow: [],
+    files: {},
+}
+
 self.addEventListener("install", (event) => {
-    console.log("[SW] Installing...")
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            console.log("[SW] Caching assets")
-            return cache.addAll(ASSETS_TO_CACHE)
-        }),
+        caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE)),
     )
     self.skipWaiting()
 })
 
 self.addEventListener("activate", (event) => {
-    console.log("[SW] Activating...")
-    event.waitUntil(clients.claim())
+    event.waitUntil(
+        Promise.all([
+            caches
+                .keys()
+                .then((keys) =>
+                    Promise.all(
+                        keys.map((k) => k !== CACHE_NAME && caches.delete(k)),
+                    ),
+                ),
+            clients.claim(),
+        ]),
+    )
+})
+
+self.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "SET_NETWORK_RULES") {
+        console.log(
+            "[SW] Updating network rules (Ephemeral):",
+            event.data.rules,
+        )
+        // Merge with existing rules or replace?
+        // Typically replace is safer to ensure state matches Host intent.
+        // But for partial updates, merge might be desired.
+        // For this library, we'll replace to keep it deterministic.
+        networkRules = event.data.rules
+    }
 })
 
 self.addEventListener("fetch", (event) => {
-    const url = new URL(event.request.url)
-    console.log(`[SW] Intercepted: ${url.pathname}`)
+    event.respondWith(
+        (async () => {
+            const url = new URL(event.request.url)
+            const sameOrigin = url.origin === self.location.origin
 
-    // 1. Offline First Strategy for static assets
-    if (url.pathname.startsWith("/sandbox/")) {
-        event.respondWith(
-            caches.match(event.request).then((cachedResponse) => {
-                return cachedResponse || fetch(event.request)
-            }),
-        )
-        return
-    }
+            // 1. Static Assets (Always allow)
+            if (sameOrigin && ASSETS_TO_CACHE.includes(url.pathname)) {
+                const cached = await caches.match(event.request)
+                return cached || fetch(event.request)
+            }
 
-    // 2. Intercept Specific "Untrusted" Requests from Executor
-    if (url.pathname === "/secret.txt") {
-        event.respondWith(
-            new Response("Intercepted Secret Data! You are safe.", {
-                status: 200,
-            }),
-        )
-        return
-    }
+            // 2. Virtual Files
+            if (networkRules.files && networkRules.files[url.pathname]) {
+                return new Response(networkRules.files[url.pathname], {
+                    status: 200,
+                    headers: { "Content-Type": "text/plain" },
+                })
+            }
 
-    // 3. Block access to sensitive endpoints or Host (conceptually)
-    // Since we are origin-isolated from localhost:3333, we can't easily fetch host data anyway (CORS),
-    // but if the Host had CORS enabled, we could block it here.
+            // 3. Allowlist Check
+            const allowList = networkRules.allow || []
+            const isAllowed = allowList.some((pattern) => {
+                if (pattern.includes("://"))
+                    return event.request.url.startsWith(pattern)
+                return (
+                    url.hostname === pattern ||
+                    url.hostname.endsWith("." + pattern)
+                )
+            })
 
-    // Default: Allow network
-    event.respondWith(fetch(event.request))
+            if (sameOrigin || isAllowed) {
+                if (!sameOrigin) {
+                    // Route cross-origin allowed requests through host proxy
+                    const hostOrigin = self.location.origin.replace(
+                        "sandbox.",
+                        "",
+                    )
+                    const proxyUrl = `${hostOrigin}/_proxy?url=${encodeURIComponent(event.request.url)}`
+                    return fetch(proxyUrl).catch((err) => {
+                        console.error("[SW] Proxy fetch failed:", err)
+                        return new Response(
+                            JSON.stringify({
+                                error: `Proxy Error: ${err.message}`,
+                            }),
+                            {
+                                status: 502,
+                                headers: { "Content-Type": "application/json" },
+                            },
+                        )
+                    })
+                }
+                return fetch(event.request)
+            }
+
+            // 4. Block
+            console.warn(`[SW] Blocked: ${event.request.url}`)
+            return new Response(
+                JSON.stringify({
+                    error: "Blocked by Sandbox Security Policy.",
+                }),
+                {
+                    status: 403,
+                    headers: { "Content-Type": "application/json" },
+                },
+            )
+        })(),
+    )
 })

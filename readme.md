@@ -4,6 +4,7 @@ A production-pattern Minimum Reproducible Example (MRE) of a secure, isolated Ja
 
 ## FUTURE WORK
 
+[] ws connections: cors not checked automatically, by default make it the application code's responsibility to check CORS. If in the allowlist there is a ws connection : How do we handle it? Can we auto check cors for the developer, or can we only warn them?
 [] Compare to https://github.com/google/playground-elements?tab=readme-ov-file#playground-preview
     - Which is better, just use google preview by itself ?
 [] automatic security check on init

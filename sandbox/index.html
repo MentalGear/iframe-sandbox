@@ -30,53 +30,34 @@
             pointer-events: none; border-radius: 4px;
             font-family: monospace;
             backdrop-filter: blur(4px);
+            z-index: 100;
         }
     </style>
 </head>
 <body>
     <div id="status">SW: disconnected</div>
-    <!-- The Inner Execution Frame -->
     <iframe id="executor" sandbox="allow-scripts allow-same-origin" src="executor.html"></iframe>
 
     <script>
         const statusEl = document.getElementById('status');
         const executor = document.getElementById('executor');
-        // Resilient Telemetry Extractor (Handles cross-frame objects & non-cloneables)
+        const HOST_ORIGIN = "http://localhost:3333";
+
+        // Telemetry Extractor
         function extractMetadata(arg, _recursionDepth = 0, seen = new WeakSet()) {
             if (arg === null || arg === undefined) return String(arg);
             const type = typeof arg;
-            
-            // Limit recursion depth to prevent infinite loops/too much data
             if (_recursionDepth > 3) return "[Max Depth]";
-
-            // Basic Types
             if (type !== 'object' && type !== 'function') return arg;
-            
-            // Functions
             if (type === 'function') return `[Function: ${arg.name || 'anonymous'}]`;
             
-            // Cross-frame Type Identification
             const constructorName = arg.constructor ? arg.constructor.name : 'Object';
-            
-            // Errors
-            if (constructorName.includes('Error')) {
-                return { _t: 'Error', name: arg.name, message: arg.message };
-            }
-            
-            // Browser Objects
-            if (constructorName === 'ServiceWorkerRegistration') {
-                return { _t: 'SW', state: arg.active ? 'active' : 'starting' };
-            }
+            if (constructorName.includes('Error')) return { _t: 'Error', name: arg.name, message: arg.message };
             if (arg.nodeType && arg.nodeName) return `[DOM Node: ${arg.nodeName}]`;
-
-            // Circular Reference Protection
             if (seen.has(arg)) return "[Circular Reference]";
+            
             seen.add(arg);
-
-            // Plain Objects and Arrays (Recursive Extraction)
-            if (Array.isArray(arg)) {
-                return arg.map(item => extractMetadata(item, _recursionDepth + 1, seen));
-            }
+            if (Array.isArray(arg)) return arg.map(item => extractMetadata(item, _recursionDepth + 1, seen));
 
             const result = {};
             try {
@@ -85,22 +66,20 @@
                         result[key] = extractMetadata(arg[key], _recursionDepth + 1, seen);
                     }
                 }
-            } catch (e) {
-                return "[Unextractable]";
-            }
+            } catch (e) { return "[Unextractable]"; }
             return result;
         }
 
-        // 1. Register Service Worker (with status polling)
+        // 1. Service Worker registration
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js')
+            navigator.serviceWorker.register('/sw.js', { scope: '/' })
                 .then(reg => {
                     const checkState = () => {
                         if (reg.active) {
                             statusEl.textContent = 'SW: active';
                             statusEl.style.backgroundColor = '#4caf50';
+                            window.parent.postMessage('READY', HOST_ORIGIN);
                         } else {
-                            statusEl.textContent = 'SW: installing...';
                             setTimeout(checkState, 200);
                         }
                     };
@@ -109,43 +88,44 @@
                 .catch(err => {
                     statusEl.textContent = 'SW: error';
                     statusEl.style.backgroundColor = '#ff5252';
+                    console.error("Sandbox SW Error:", err);
                 });
         }
 
-        // 2. Relay messages from Host to Executor
+        // 2. Incoming messages from Host
         window.addEventListener('message', (event) => {
-            if (event.origin !== "http://localhost:3333") return;
-            if (event.data && event.data.type === 'EXECUTE') {
-                executor.contentWindow.postMessage(event.data, "*");
-            }
-        });
+            if (event.origin !== HOST_ORIGIN) return;
+            
+            const data = event.data;
+            if (!data) return;
 
-        // 3. Relay messages from Executor to Host (logs/errors)
-        window.addEventListener('message', (event) => {
-            if (event.source === executor.contentWindow) {
-                try {
-                    // CRITICAL: We must sanitize data from the executor too!
-                    // If the executor sends a Raw Error or weird object, 
-                    // relaying it will trigger a DataCloneError.
-                    const sanitizedData = extractMetadata(event.data);
-                    window.parent.postMessage(sanitizedData, "http://localhost:3333");
-                } catch (e) {
-                    console.error("Relay failed:", e.message);
+            if (data.type === 'EXECUTE') {
+                executor.contentWindow.postMessage(data, "*");
+            } else if (data.type === 'SET_NETWORK_RULES') {
+                if (navigator.serviceWorker.controller) {
+                    navigator.serviceWorker.controller.postMessage(data);
                 }
             }
         });
 
-        // Simplified Console Proxy
+        // 3. Outgoing messages from Executor
+        window.addEventListener('message', (event) => {
+            if (event.source === executor.contentWindow) {
+                try {
+                    const sanitized = extractMetadata(event.data);
+                    window.parent.postMessage(sanitized, HOST_ORIGIN);
+                } catch (e) {}
+            }
+        });
+
+        // Local Console Proxy
         ['log', 'error', 'warn'].forEach(type => {
             const original = console[type];
             console[type] = function(...args) {
                 try {
                     const safeArgs = args.map(arg => extractMetadata(arg));
-                    const msg = { type: 'LOG', depth: 'manager', logType: type, args: safeArgs };
-                    window.parent.postMessage(msg, "http://localhost:3333");
-                } catch (e) {
-                    original.apply(console, ["Logger error:", e.message]);
-                }
+                    window.parent.postMessage({ type: 'LOG', depth: 'manager', logType: type, args: safeArgs }, HOST_ORIGIN);
+                } catch (e) {}
                 original.apply(console, args);
             };
         });

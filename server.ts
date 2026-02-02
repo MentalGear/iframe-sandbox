@@ -5,65 +5,114 @@ const PORT = 3333
 
 console.log(`Server running at:`)
 console.log(`- Host:    http://localhost:${PORT}`)
-console.log(`- Sandbox: http://127.0.0.1:${PORT}`) // Same server, distinct origin
+console.log(`- Sandbox: http://sandbox.localhost:${PORT}`)
 
 serve({
     port: PORT,
     async fetch(req) {
         const url = new URL(req.url)
+        const hostHeader = req.headers.get("host") || ""
+        const isSandboxSubdomain = hostHeader.startsWith("sandbox.")
         let path = url.pathname
 
-        // Router
-        if (path === "/" || path === "/index.html") {
-            // If accessed via localhost, serve client (Host)
-            // If accessed via 127.0.0.1, serve sandbox (for direct testing, though usually accessed via iframe)
-            // Actually, to keep it simple, let's explicitely route:
-            // localhost:3333/ -> client/index.html
-            // But the sandbox iframe is loaded via 127.0.0.1:3333/sandbox/index.html
-            path = "/client/index.html"
-        }
-
-        // Serve static files
-        // Security: Only allow serving from client/ and sandbox/ folders to prevent directory traversal
-        let filePath
-        if (path.startsWith("/client/")) {
-            filePath = join(process.cwd(), path)
-        } else if (path.startsWith("/sandbox/")) {
-            filePath = join(process.cwd(), path)
-        } else {
-            return new Response("Not Found", { status: 404 })
-        }
-
-        const file = Bun.file(filePath)
-        if (await file.exists()) {
-            const headers = new Headers()
-            headers.set("Content-Type", file.type)
-            headers.set(
-                "Cache-Control",
-                "no-store, no-cache, must-revalidate, proxy-revalidate",
+        // 1. CORS Proxy (must be before path mapping)
+        if (path === "/_proxy") {
+            const targetUrl = url.searchParams.get("url")
+            const proxyHeaders = new Headers()
+            proxyHeaders.set("Access-Control-Allow-Origin", "*")
+            proxyHeaders.set(
+                "Access-Control-Allow-Methods",
+                "GET, POST, OPTIONS",
             )
-            headers.set("Pragma", "no-cache")
-            headers.set("Expires", "0")
+            proxyHeaders.set("Access-Control-Allow-Headers", "*")
 
-            // Security: Add CSP
-            if (path.startsWith("/sandbox/")) {
-                // Sandbox needs scripts and same-origin to allow Service Worker
-                headers.set(
-                    "Content-Security-Policy",
-                    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';",
-                )
-            } else {
-                // Host CSP: Allows loading iframe from 127.0.0.1
-                headers.set(
-                    "Content-Security-Policy",
-                    "default-src 'self' http://127.0.0.1:3333; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-src http://127.0.0.1:3333;",
-                )
+            if (req.method === "OPTIONS")
+                return new Response(null, { headers: proxyHeaders })
+            if (!targetUrl)
+                return new Response("Missing url", {
+                    status: 400,
+                    headers: proxyHeaders,
+                })
+
+            console.log(`[Proxy] Fetching: ${targetUrl}`)
+            try {
+                const proxyRes = await fetch(targetUrl)
+                const resHeaders = new Headers(proxyRes.headers)
+
+                // Security: Strip headers that might conflict with the uncompressed body
+                resHeaders.delete("content-encoding")
+                resHeaders.delete("content-length")
+                resHeaders.delete("transfer-encoding")
+                resHeaders.delete("connection")
+
+                // Ensure the sandbox can read the returned data
+                resHeaders.set("Access-Control-Allow-Origin", "*")
+                return new Response(proxyRes.body, {
+                    status: proxyRes.status,
+                    statusText: proxyRes.statusText,
+                    headers: resHeaders,
+                })
+            } catch (e: any) {
+                return new Response(`Proxy Error: ${e.message}`, {
+                    status: 502,
+                    headers: proxyHeaders,
+                })
+            }
+        }
+
+        // 2. Router
+        if (isSandboxSubdomain) {
+            if (path === "/sw.js") path = "/sandbox/sw.js"
+            else if (!path.startsWith("/sandbox/")) {
+                path = "/sandbox" + (path === "/" ? "/index.html" : path)
+            }
+        } else {
+            // Main domain (localhost:3333) logic
+            if (path === "/SafeSandbox.js") {
+                path = "/client/SafeSandbox.js"
+            } else if (path === "/sw.js") {
+                // Forward legacy SW requests to sandbox SW (for demo purposes)
+                path = "/sandbox/sw.js"
+            } else if (
+                !path.startsWith("/client/") &&
+                !path.startsWith("/sandbox/")
+            ) {
+                path = "/client" + (path === "/" ? "/index.html" : path)
+            }
+        }
+
+        // 3. Serve Files
+        if (path.includes(".."))
+            return new Response("Forbidden", { status: 403 })
+
+        const relPath = path.startsWith("/") ? path.slice(1) : path
+        const filePath = join(process.cwd(), relPath)
+        const file = Bun.file(filePath)
+
+        if (await file.exists()) {
+            const responseHeaders: Record<string, string> = {
+                "Content-Type": file.type,
+                "Cache-Control": "no-store, no-cache, must-revalidate",
             }
 
-            return new Response(file, { headers })
+            if (path.endsWith("sw.js"))
+                responseHeaders["Service-Worker-Allowed"] = "/"
+
+            if (isSandboxSubdomain || path.startsWith("/sandbox/")) {
+                responseHeaders["Content-Security-Policy"] =
+                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src *;"
+            } else {
+                const sandboxOrigin = `http://sandbox.localhost:${PORT}`
+                responseHeaders["Content-Security-Policy"] =
+                    `default-src 'self' ${sandboxOrigin} http://127.0.0.1:${PORT}; ` +
+                    `script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; ` +
+                    `frame-src ${sandboxOrigin} http://127.0.0.1:${PORT};`
+            }
+
+            return new Response(file, { headers: responseHeaders })
         }
 
-        console.log(`404: ${path}`)
+        console.log(`[Server] 404: ${path} (from ${hostHeader})`)
         return new Response("Not Found", { status: 404 })
     },
 })
