@@ -1,64 +1,139 @@
 # SafeSandbox Library
 
-A secure, non-intrusive JavaScript sandbox Custom Element featuring subdomain isolation, absolute network virtualization, and transparent CORS handling.
+A secure JavaScript sandbox Custom Element featuring subdomain isolation, network virtualization, and transparent CORS handling.
 
-## Key Features
+## Features
 
-- **`<safe-sandbox>` Custom Element**: Easy integration into any web project.
-- **Subdomain-based Isolation**: High-security barrier between Host (`localhost`) and Sandbox (`sandbox.localhost`).
-- **Network Virtualization**: An allowlist-based firewall managed via Service Workers.
-- **Static-First with Optional Proxy**: Transparent bypass for allowlisted external APIs via a server-side proxy. Works 100% statically for CORS-enabled APIs; requires a host-side handler (e.g., `/_proxy`) for non-CORS targets.
-- **Ephemeral & Resilient**: Stateless Service Worker that automatically re-configs from the Host element upon reconnection.
-- **In-Memory Virtual Files**: Inject mock data into the sandbox's filesystem without actual disk writes.
+- **`<safe-sandbox>` Custom Element**: Easy integration with automatic setup
+- **Subdomain Isolation**: Strict origin separation between Host and Sandbox
+- **Network Firewall**: Allowlist-based request filtering via Service Worker
+- **CORS Proxy**: Optional server-side proxy for non-CORS APIs
+- **Virtual Files**: In-memory file injection without disk writes
+
+## Quick Start
+
+```html
+<safe-sandbox id="sandbox"></safe-sandbox>
+
+<script type="module" src="/lib/SafeSandbox.ts"></script>
+<script>
+  const sandbox = document.getElementById('sandbox');
+  
+  sandbox.addEventListener('ready', () => {
+    sandbox.setNetworkRules({
+      allow: ['api.example.com'],
+      useProxy: false,
+      files: { '/config.json': '{"key": "value"}' }
+    });
+    
+    sandbox.execute('fetch("/config.json").then(r => r.json()).then(console.log)');
+  });
+  
+  sandbox.addEventListener('log', (e) => console.log(e.detail));
+</script>
+```
 
 ## Architecture
 
-```mermaid
-graph TD
-    Host["Host (localhost:3333)"] -- "PostMessage (Rules/Code)" --> Element["&lt;safe-sandbox&gt; Custom Element"]
-    Element -- "Iframe Embed" --> Sandbox["Sandbox (sandbox.localhost:3333)"]
-    Sandbox -- "Fetch Request" --> SW["Sandbox Service Worker"]
-    SW -- "Allowlist Check" --> Decision{"Is Allowed?"}
-    Decision -- "No" --> Block["403 Forbidden"]
-    Decision -- "Yes (External)" --> Proxy["Server /_proxy"]
-    Decision -- "Yes (Internal)" --> Assets["Static Assets"]
-    Proxy -- "Fetch/Inject CORS" --> API["External API (e.g. JSONPlaceholder)"]
+```
+Host (localhost:3333)
+    |
+    +-- playground/          # Demo UI
+    +-- lib/SafeSandbox.ts   # Custom Element
+    |
+Sandbox (sandbox.localhost:3333)
+    |
+    +-- outer-frame.html     # SW registration, message relay
+    +-- inner-frame.html     # Code execution
+    +-- outer-sw.ts          # Network firewall
+    +-- ipc.ts               # Messaging utilities
+```
+
+## API
+
+### Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `sandbox-origin` | Sandbox subdomain URL (auto-derived if omitted) |
+| `src` | User content URL to sandbox (future) |
+
+### Methods
+
+```ts
+sandbox.execute(code: string)     // Run JS in sandbox
+sandbox.loadSrc(url: string)      // Load URL in sandbox (future)
+sandbox.setNetworkRules(rules)    // Set network rules
+```
+
+### Events
+
+| Event | Detail |
+|-------|--------|
+| `ready` | Sandbox initialized |
+| `log` | LogMessage from sandbox |
+
+### NetworkRules
+
+```ts
+interface NetworkRules {
+  allow?: string[]              // Allowed domains (default: [])
+  useProxy?: boolean            // Use CORS proxy (default: false)
+  files?: Record<string, string> // Virtual files (default: {})
+}
+```
+
+### LogMessage
+
+```ts
+interface LogMessage {
+  type: 'LOG'
+  timestamp: number
+  source: 'outer' | 'inner'
+  level: 'log' | 'warn' | 'error'
+  area?: 'network' | 'security' | 'user-code'
+  message: string
+  data?: Record<string, unknown>
+}
+```
+
+## Configuration
+
+Set via environment variables:
+
+```bash
+PORT=3333 HOST=localhost bun server.ts
 ```
 
 ## Security Model
 
-1.  **Origin Isolation**: The sandbox runs on a dedicated subdomain. Cookies and LocalStorage are not shared with the host.
-2.  **Firewall-by-Default**: Every outgoing request from the sandbox is intercepted. Any request not in your `allow` list is blocked with a 403.
-3.  **CSP Hardening**: The server enforces strict Content Security Policies that prevent malicious frames and restrict script execution sources.
+1. **Origin Isolation**: Sandbox on dedicated subdomain, no shared cookies/storage
+2. **Network Firewall**: All external requests blocked unless in allowlist
+3. **CSP Hardening**: Strict policies per origin
 
 ## Future Work
 
-- [ ] **WS Connections**: Implement    - [x] Update documentation for static-first approach <!-- id: 404 -->
-    - [x] Refine Playground UI (JSON editor + Presets) <!-- id: 405 -->
-    - [x] Fix UI log colors and enhance error hints <!-- id: 406 -->
-Evaluate against `playground-elements` for developer experience.
-- [ ] **Security Audits**: Automated CSP validation on startup.
+- [ ] **captureContentDebug**: When enabled, inject telemetry into `loadSrc()` content to capture console.log/error and thrown exceptions from external URLs
+- [ ] **WebSocket Support**: Intercept and filter WS connections
+- [ ] **Security Audits**: Automated CSP validation on startup
+- [ ] **MessageChannel IPC**: Replace postMessage wildcards with secure port transfer
 
 ## Service Worker Caching Strategies
 
-The sandbox Service Worker supports three caching strategies for local assets (`executor.html`, `telemetry.js`), controlled via the `?strategy` URL parameter during registration:
+Configure via URL param: `outer-sw.js?strategy=<strategy>`
 
-1.  **`network-first` (Default)**: Best for safe development and reliable offline support. Tries the network first, falls back to cache if offline.
-2.  **`network-only`**: Always and only gets the newest version from network, but doesn't work offline (PWA). UseUseful for debugging latest changes without any cache interference.
-3.  **`cache-first`**: Uses cached assets instantly but **beware of stale code** during development.
-
-**Usage:**
-```javascript
-// In client/index.html or your host app
-navigator.serviceWorker.register("./sw.js?strategy=network-first");
-```
+| Strategy | Behavior |
+|----------|----------|
+| `network-first` | Try network, fallback to cache (default) |
+| `cache-first` | Use cache if available, else network |
+| `network-only` | Always fetch, no caching |
 
 > [!WARNING]
 > **Stale Cache Trap**: If you use `cache-first` (or previously had a strong cache policy), you may see old versions of the sandbox even after deploying updates. If `sandbox/executor.html` changes, users effectively need a new Service Worker. The `network-first` default avoids this loop by always checking for updates.
 
 ## Testing
 
-Run the included Playwright suite to verify isolation and network rules:
 ```bash
-npx playwright test
+bun server.ts
+# Open http://localhost:3333
 ```

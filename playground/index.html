@@ -216,7 +216,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
         </div>
         <div class="card">
             <span class="label">Sandbox View (Strict Subdomain):</span>
-            <safe-sandbox id="sandbox" src="http://sandbox.localhost:3333/sandbox/index.html"></safe-sandbox>
+            <safe-sandbox id="sandbox" sandbox-origin="http://sandbox.localhost:3333"></safe-sandbox>
         </div>
     </div>
 
@@ -225,8 +225,8 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
     </div>
     <div id="logs">Waiting for sandbox...</div>
 
-    <script src="playground-state.js"></script>
-    <script type="module" src="SafeSandbox.js"></script>
+    <script src="state.ts"></script>
+    <script type="module" src="/lib/SafeSandbox.ts"></script>
     <script>
         const sandbox = document.getElementById('sandbox');
         const logsDiv = document.getElementById('logs');
@@ -235,7 +235,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
         sandbox.addEventListener('ready', () => {
             document.getElementById('sandbox-status').textContent = 'Sandbox: Ready';
             document.getElementById('sandbox-status').style.color = '#4caf50';
-            appendLog({ type: 'LOG', depth: 'host', args: ['Sandbox is ready!'] });
+            appendLocalLog('Sandbox is ready!');
         });
 
         sandbox.addEventListener('log', (event) => {
@@ -257,35 +257,43 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
 
             const div = document.createElement('div');
             div.className = 'log-entry';
-            const depth = data.depth || 'unknown';
-            const args = data.args || [];
-            let logType = data.logType || 'log';
             
-            // Detect errors via Category or Status Code
-            if (data.category === 'error' || (args[0] && args[0].status >= 400)) {
-                logType = 'error';
+            // Handle new LogMessage schema
+            const source = data.source || data.depth || 'host';
+            const level = data.level || data.logType || 'log';
+            const message = data.message || (data.args ? data.args.join(' ') : '');
+            const area = data.area || '';
+            
+            // Color based on level
+            const isError = level === 'error';
+            const badgeColor = isError ? '#ff5252' : (level === 'warn' ? '#ffb74d' : '#4caf50');
+            
+            const badge = document.createElement('span');
+            badge.style.color = badgeColor;
+            badge.textContent = `[${source}${area ? ':' + area : ''}] `;
+            
+            const content = document.createElement('span');
+            content.style.color = isError ? '#ff5252' : 'inherit';
+            content.textContent = message;
+            
+            div.appendChild(badge);
+            div.appendChild(content);
+            
+            // Category styling
+            if (area) {
+                div.classList.add(`cat-${area}`);
             }
-
-            const badge = `<span style="color: ${logType === 'error' ? '#ff5252' : '#4caf50'}">[${depth}]</span> `;
-            
-            // Format content: handle strings vs detailed objects
-            const content = args.map(a => {
-                if (typeof a === 'string') return a;
-                if (a && a.url && a.status) return `${a.method || 'GET'} ${a.url} -> ${a.status} ${a.statusText || ''}`;
-                return JSON.stringify(a);
-            }).join(' ');
-            
-            const badgeSpan = document.createElement('span');
-            badgeSpan.innerHTML = badge;
-            
-            const contentSpan = document.createElement('span');
-            contentSpan.style.color = logType === 'error' ? '#ff5252' : 'inherit';
-            contentSpan.textContent = content; 
-            
-            div.appendChild(badgeSpan);
-            div.appendChild(contentSpan);
             
             logsDiv.prepend(div);
+        }
+
+        // Helper for local playground messages (not from sandbox)
+        function appendLocalLog(message) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerHTML = `<span style="color: #888">[playground]</span> <span>${message}</span>`;
+            logsDiv.prepend(div);
+            firstLog = false;
         }
 
         const PRESETS = {
@@ -347,7 +355,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             try {
                 const rules = JSON.parse(rulesStr);
                 sandbox.setNetworkRules(rules);
-                appendLog({ type: 'LOG', depth: 'host', args: ['Network rules auto-applied.'] });
+                appendLocalLog('Network rules applied.');
                 
                 // Keep UI toggle in sync
                 const proxyToggle = document.getElementById('proxyToggle');
@@ -364,7 +372,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             const code = document.getElementById('code').value;
             // Ensure any pending rules are applied before running
             applyNetworkRules();
-            appendLog({ type: 'LOG', depth: 'host', args: ['Executing source code...'] });
+            appendLocalLog('Executing code...');
             sandbox.execute(code);
         }
 
@@ -378,7 +386,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
                 proxyToggle.style.background = rules.useProxy ? 'var(--primary)' : '#444';
                 proxyToggle.textContent = `Proxy: ${rules.useProxy ? 'ON' : 'OFF'}`;
                 
-                appendLog({ type: 'LOG', depth: 'host', args: [`Proxy toggled: ${rules.useProxy ? 'ON' : 'OFF'}`] });
+                appendLocalLog(`Proxy: ${rules.useProxy ? 'ON' : 'OFF'}`);
                 
                 // Trigger custom and save
                 playground.triggerCustomMode();
@@ -387,7 +395,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
                 // Apply immediately
                 sandbox.setNetworkRules(rules);
             } catch (e) {
-                appendLog({ type: 'LOG', depth: 'host', args: [`Rules JSON is invalid, cannot toggle proxy.`] });
+                appendLocalLog('Invalid JSON in rules editor.');
             }
         }
 
@@ -397,7 +405,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
         }
 
         window.resetSandbox = async () => {
-             appendLog({ type: 'LOG', depth: 'host', args: ['Resetting sandbox... Clean refresh required.'] });
+             appendLocalLog('Resetting sandbox...');
              const regs = await navigator.serviceWorker.getRegistrations();
              for (let reg of regs) await reg.unregister();
              localStorage.removeItem('safeSandbox_customState');

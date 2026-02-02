@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sandbox Inner Frame</title>
+</head>
+<body>
+    <script>
+        /**
+         * Inner Frame - Executes user code and relays logs to outer frame.
+         */
+
+        // Safe extraction for postMessage (handles cross-frame objects)
+        function extractMetadata(arg, depth = 0, seen = new WeakSet()) {
+            if (arg === null || arg === undefined) return String(arg);
+            const type = typeof arg;
+            
+            if (depth > 3) return "[Max Depth]";
+            if (type !== 'object' && type !== 'function') return arg;
+            if (type === 'function') return `[Function: ${arg.name || 'anonymous'}]`;
+            
+            const ctorName = arg.constructor?.name || 'Object';
+            if (ctorName.includes('Error')) {
+                return { _type: 'Error', name: arg.name, message: arg.message };
+            }
+            if (arg.nodeType && arg.nodeName) return `[DOM: ${arg.nodeName}]`;
+            if (seen.has(arg)) return "[Circular]";
+            
+            seen.add(arg);
+            if (Array.isArray(arg)) {
+                return arg.map(item => extractMetadata(item, depth + 1, seen));
+            }
+
+            const result = {};
+            try {
+                for (const key in arg) {
+                    if (Object.prototype.hasOwnProperty.call(arg, key)) {
+                        result[key] = extractMetadata(arg[key], depth + 1, seen);
+                    }
+                }
+            } catch (e) { return "[Unextractable]"; }
+            return result;
+        }
+
+        // Create log message in unified schema
+        function createLogMessage(level, message, data = {}) {
+            return {
+                type: 'LOG',
+                timestamp: Date.now(),
+                source: 'inner',
+                level,
+                area: 'user-code',
+                message,
+                data
+            };
+        }
+
+        // Proxy console methods
+        ['log', 'error', 'warn'].forEach(level => {
+            const original = console[level];
+            console[level] = function(...args) {
+                try {
+                    const safeArgs = args.map(arg => extractMetadata(arg));
+                    const message = safeArgs.map(a => 
+                        typeof a === 'string' ? a : JSON.stringify(a)
+                    ).join(' ');
+                    
+                    window.parent.postMessage(
+                        createLogMessage(level, message, { args: safeArgs }),
+                        "*"
+                    );
+                } catch (e) {
+                    original.apply(console, ["[Inner] Relay Error", e]);
+                }
+                original.apply(console, args);
+            };
+        });
+
+        // Unhandled promise rejections
+        window.addEventListener('unhandledrejection', (event) => {
+            const error = extractMetadata(event.reason);
+            window.parent.postMessage(
+                createLogMessage('error', `Unhandled Rejection: ${JSON.stringify(error)}`, error),
+                "*"
+            );
+        });
+
+        // Global error handler
+        window.addEventListener('error', (event) => {
+            window.parent.postMessage(
+                createLogMessage('error', `${event.message} at ${event.filename}:${event.lineno}`, {
+                    message: event.message,
+                    filename: event.filename,
+                    lineno: event.lineno,
+                    colno: event.colno
+                }),
+                "*"
+            );
+        });
+
+        // Execute code from outer frame
+        window.addEventListener('message', (event) => {
+            if (event.data?.type === 'EXECUTE') {
+                try {
+                    const func = new Function(event.data.code);
+                    func();
+                } catch (e) {
+                    console.error("Execution Error:", e);
+                }
+            }
+        });
+        
+        // Signal ready
+        if (window.parent) {
+            window.parent.postMessage('READY', '*');
+        }
+        
+        console.log("Inner frame loaded.");
+    </script>
+</body>
+</html>
