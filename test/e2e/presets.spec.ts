@@ -223,3 +223,112 @@ test.describe("Log Message Schema", () => {
         )
     })
 })
+
+// ============================================================================
+// Test: Security Isolation
+// ============================================================================
+test.describe("Security Isolation", () => {
+    test("alert() is blocked", async ({ page }) => {
+        await page.goto("/")
+
+        await expect(page.locator("#sandbox-status")).toContainText("Ready", {
+            timeout: 10000,
+        })
+
+        // Set up dialog handler - should NOT be called
+        let dialogAppeared = false
+        page.on("dialog", async (dialog) => {
+            dialogAppeared = true
+            await dialog.dismiss()
+        })
+
+        await page.click('button:has-text("Clear Logs")')
+        await page.locator("#code").fill(`
+            alert("Test alert");
+            console.log("PASS: alert called without error");
+        `)
+        await page.click('button:has-text("Run Code")')
+
+        // Wait for log
+        await expect(page.locator("#logs")).toContainText(
+            /PASS.*alert called/,
+            {
+                timeout: 5000,
+            },
+        )
+
+        // Verify no dialog appeared
+        expect(dialogAppeared).toBe(false)
+    })
+
+    test("window.top is inaccessible", async ({ page }) => {
+        await page.goto("/")
+
+        await expect(page.locator("#sandbox-status")).toContainText("Ready", {
+            timeout: 10000,
+        })
+
+        await page.click('button:has-text("Clear Logs")')
+        await page.locator("#code").fill(`
+            try {
+                const top = window.top.location.href;
+                console.log("FAIL: window.top accessible");
+            } catch (e) {
+                console.log("PASS: window.top blocked");
+            }
+        `)
+        await page.click('button:has-text("Run Code")')
+
+        await expect(page.locator("#logs")).toContainText(
+            /PASS.*window\.top blocked/,
+            {
+                timeout: 5000,
+            },
+        )
+    })
+
+    test("cookies are isolated from host", async ({ page }) => {
+        await page.goto("/")
+
+        // Set a cookie on the host
+        await page.context().addCookies([
+            {
+                name: "host_cookie",
+                value: "host_value",
+                domain: "localhost",
+                path: "/",
+            },
+        ])
+
+        await expect(page.locator("#sandbox-status")).toContainText("Ready", {
+            timeout: 10000,
+        })
+
+        await page.click('button:has-text("Clear Logs")')
+        await page.locator("#code").fill(`
+            // Try to set sandbox cookie
+            document.cookie = "sandbox_test=123; SameSite=Lax";
+            
+            // Host cookie isolation check
+            const hasHost = document.cookie.includes("host_cookie");
+            console.log(hasHost ? "FAIL: Host cookie visible" : "PASS: Host cookie isolated");
+            
+            // Log local state
+            console.log("Sandbox cookie set:", document.cookie.includes("sandbox_test") ? "YES" : "NO");
+            console.log("Raw cookie jar:", document.cookie || "(empty)");
+        `)
+        await page.click('button:has-text("Run Code")')
+
+        await expect(page.locator("#logs")).toContainText(
+            /PASS: Host cookie isolated/,
+            {
+                timeout: 5000,
+            },
+        )
+
+        // Ensure host cookie is NOT there
+        await expect(page.locator("#logs")).not.toContainText(
+            /FAIL: Host cookie visible/,
+        )
+    })
+})
