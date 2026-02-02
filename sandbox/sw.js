@@ -141,7 +141,7 @@ self.addEventListener("fetch", (event) => {
                         )
                         self.telemetry.broadcast(
                             "error",
-                            errorDetails,
+                            { ...errorDetails, logType: "error" },
                             event.clientId,
                         ) // Just broadcast the error object
 
@@ -162,7 +162,7 @@ self.addEventListener("fetch", (event) => {
             const blockMsg = `Blocked by Sandbox Security Policy: ${event.request.url}`
             self.telemetry.broadcast(
                 "error",
-                { message: blockMsg },
+                { message: blockMsg, logType: "error" },
                 event.clientId,
             )
             return new Response(

@@ -67,6 +67,7 @@ self.telemetry = {
      */
     serializeNetwork(request, response) {
         return {
+            message: `${request.method} ${request.url} -> ${response.status} ${response.statusText}`,
             method: request.method,
             url: request.url,
             status: response.status,
