@@ -23,6 +23,7 @@ interface NetworkRules {
     allow?: string[]
     useProxy?: boolean
     files?: Record<string, string>
+    cacheStrategy?: "network-first" | "cache-first" | "network-only"
 }
 
 const ipc = {
@@ -99,7 +100,12 @@ const ASSETS_TO_CACHE = [
 const params = new URL(self.location.href).searchParams
 const CACHE_STRATEGY = params.get("strategy") || "network-first"
 
-let networkRules: NetworkRules = { allow: [], useProxy: false, files: {} }
+let networkRules: NetworkRules = {
+    allow: [],
+    useProxy: false,
+    files: {},
+    cacheStrategy: "network-first",
+}
 
 self.addEventListener("install", (event) => {
     event.waitUntil(
@@ -118,6 +124,7 @@ self.addEventListener("message", (event) => {
             allow: event.data.rules?.allow ?? [],
             useProxy: event.data.rules?.useProxy ?? false,
             files: event.data.rules?.files ?? {},
+            cacheStrategy: event.data.rules?.cacheStrategy ?? "network-first",
         }
     }
 })
@@ -146,10 +153,11 @@ self.addEventListener("fetch", (event) => {
 
             // 2. Same-Origin (Cache)
             if (sameOrigin) {
-                if (CACHE_STRATEGY === "cache-first") {
+                const strategy = networkRules.cacheStrategy ?? "network-first"
+                if (strategy === "cache-first") {
                     const cached = await caches.match(event.request)
                     return cached || fetch(event.request)
-                } else if (CACHE_STRATEGY === "network-only") {
+                } else if (strategy === "network-only") {
                     return fetch(event.request)
                 } else {
                     try {

@@ -80,6 +80,7 @@ interface NetworkRules {
   allow?: string[]              // Allowed domains (default: [])
   useProxy?: boolean            // Use CORS proxy (default: false)
   files?: Record<string, string> // Virtual files (default: {})
+  cacheStrategy?: 'network-first' | 'cache-first' | 'network-only'
 }
 ```
 
@@ -118,9 +119,9 @@ PORT=3333 HOST=localhost bun server.ts
 - [ ] **Security Audits**: Automated CSP validation on startup
 - [ ] **MessageChannel IPC**: Replace postMessage wildcards with secure port transfer
 
-## Service Worker Caching Strategies
+## Service Worker Caching
 
-Configure via URL param: `outer-sw.js?strategy=<strategy>`
+Set via `cacheStrategy` in NetworkRules or URL param `outer-sw.js?strategy=<value>`:
 
 | Strategy | Behavior |
 |----------|----------|
@@ -129,7 +130,7 @@ Configure via URL param: `outer-sw.js?strategy=<strategy>`
 | `network-only` | Always fetch, no caching |
 
 > [!WARNING]
-> **Stale Cache Trap**: If you use `cache-first` (or previously had a strong cache policy), you may see old versions of the sandbox even after deploying updates. If `sandbox/executor.html` changes, users effectively need a new Service Worker. The `network-first` default avoids this loop by always checking for updates.
+> `cache-first` may serve stale content. Use `network-first` (default) for development. And/or clear your page data: Dev Tools > Application > Clear Data.
 
 ## Testing
 

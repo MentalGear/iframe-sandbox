@@ -26,10 +26,12 @@
             font-weight: 800;
             letter-spacing: -0.02em;
             margin-bottom: 20px;
-            background: linear-gradient(135deg, var(--accent), #ff8a80);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
+            /* color: #ff8a80; */
+            color: var(--primary);
+            /* background: linear-gradient(135deg, var(--accent), #ff8a80); */
+            /* -webkit-background-clip: text; */
+            /* background-clip: text; */
+            /* -webkit-text-fill-color: transparent; */
             margin-top: 0;
         }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
@@ -164,21 +166,23 @@
     </style>
 </head>
 <body>
-    <h1>SafeSandbox Library Demo</h1>
+    <h1>SafeSandbox Playground</h1>
     
     <div class="status-bar-header">
+        <div class="global-controls">
+            <span class="label" style="margin-bottom: 0;">Playground Preset:</span>
+            <select id="presetSelect" onchange="loadPreset()">
+                <option value="none">-- Select preset --</option>
+                <option value="jsonplaceholder">JSONPlaceholder (CORS OK)</option>
+                <option value="google">Google (CORS Proxy)</option>
+                <option value="blocked">Block All</option>
+                <option value="virtualfiles">Virtual Files</option>
+                <option value="caching">Cache Strategy</option>
+                <option value="custom">Custom (localStorage)</option>
+            </select>
+        </div>
         <div class="status-bar">
             <span id="sandbox-status">Sandbox: Disconnected</span>
-        </div>
-        <div class="global-controls">
-            <span class="label">Network Preset:</span>
-            <select id="presetSelect" onchange="loadPreset()">
-                <option value="none">-- Select a scenario --</option>
-                <option value="jsonplaceholder">JSONPlaceholder (CORS Allowed)</option>
-                <option value="google">Google API (Blocked / CORS Proxy)</option>
-                <option value="blocked">Block All</option>
-                <option value="custom">Custom (Saved to Storage)</option>
-            </select>
         </div>
     </div>
 
@@ -297,9 +301,43 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
         }
 
         const PRESETS = {
-            jsonp: { allow: ['jsonplaceholder.typicode.com'], useProxy: false, files: { '/virtual.txt': 'CORS-friendly data.' } },
-            google: { allow: ['www.google.com'], useProxy: true, files: { '/virtual.txt': 'Proxy required for Google.' } },
-            blocked: { allow: [], useProxy: false, files: {} }
+            jsonplaceholder: {
+                rules: { allow: ['jsonplaceholder.typicode.com'], useProxy: false },
+                code: `// JSONPlaceholder - CORS-friendly API
+console.log("Fetching from JSONPlaceholder...");
+fetch("https://jsonplaceholder.typicode.com/todos/1")
+  .then(r => r.json())
+  .then(data => console.log("Got:", data));`
+            },
+            google: {
+                rules: { allow: ['www.google.com'], useProxy: true },
+                code: `// Google - Needs CORS proxy
+console.log("Fetching Google via proxy...");
+fetch("https://www.google.com")
+  .then(r => console.log("Status:", r.status));`
+            },
+            blocked: {
+                rules: { allow: [] },
+                code: `// All external blocked
+console.log("Attempting blocked request...");
+fetch("https://example.com");`
+            },
+            virtualfiles: {
+                rules: { files: { '/config.json': '{"version": "1.0"}', '/data.txt': 'Hello World' } },
+                code: `// Virtual files demo
+fetch("/config.json").then(r => r.json()).then(d => console.log("Config:", d));
+fetch("/data.txt").then(r => r.text()).then(t => console.log("Data:", t));`
+            },
+            caching: {
+                rules: { allow: ['jsonplaceholder.typicode.com'], cacheStrategy: 'cache-first' },
+                code: `// Cache-first strategy demo
+console.log("First fetch (network)...");
+fetch("https://jsonplaceholder.typicode.com/posts/1");
+setTimeout(() => {
+  console.log("Second fetch (should hit cache)...");
+  fetch("https://jsonplaceholder.typicode.com/posts/1");
+}, 1000);`
+            }
         };
 
         window.loadPreset = () => {
@@ -310,24 +348,13 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
                 return;
             }
             
-            const rules = PRESETS[val];
-            document.getElementById('rulesEditor').value = JSON.stringify(rules, null, 2);
+            const preset = PRESETS[val];
+            if (!preset) return;
             
-            // Apply rules immediately on preset change
+            document.getElementById('rulesEditor').value = JSON.stringify(preset.rules, null, 2);
+            document.getElementById('code').value = preset.code;
+            
             applyNetworkRules();
-
-            // Update code editor with a relevant test
-            const domain = rules.allow[0] || '';
-            const testUrl = domain === 'www.google.com' ? 'https://www.google.com' : (domain ? `https://${domain}/todos/1` : 'https://example.com');
-            
-            document.getElementById('code').value = `console.log("Testing fetch to: ${testUrl}...");
-
-// No manual catch/log needed! The Firewall (SW) reports status directly to the UI.
-fetch("${testUrl}");
-
-fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file found:", t));`;
-            
-            // Reset custom storage if user picks a preset
             playground.saveState();
         }
 

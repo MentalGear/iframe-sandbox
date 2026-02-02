@@ -7,6 +7,7 @@ interface NetworkRules {
     allow?: string[]
     useProxy?: boolean
     files?: Record<string, string>
+    cacheStrategy?: "network-first" | "cache-first" | "network-only"
 }
 
 interface LogMessage {
