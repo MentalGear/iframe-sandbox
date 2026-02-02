@@ -1,61 +1,64 @@
-# iFrame Sandbox MRE
+# SafeSandbox Library
 
-A production-pattern Minimum Reproducible Example (MRE) of a secure, isolated JavaScript sandbox using iFrame origin isolation and Service Worker network interception.
+A secure, non-intrusive JavaScript sandbox Custom Element featuring subdomain isolation, absolute network virtualization, and transparent CORS handling.
 
-## FUTURE WORK
+## Key Features
 
-[] ws connections: cors not checked automatically, by default make it the application code's responsibility to check CORS. If in the allowlist there is a ws connection : How do we handle it? Can we auto check cors for the developer, or can we only warn them?
-[] Compare to https://github.com/google/playground-elements?tab=readme-ov-file#playground-preview
-    - Which is better, just use google preview by itself ?
-[] automatic security check on init
-[] pass this security list https://jscrambler.com/blog/improving-iframe-security
-[] make a lib out of this, use web component
-
-## Core Features
-- **Origin Isolation**: Uses `localhost` vs `127.0.0.1` to create a strict security boundary.
-- **Network Interception**: A Service Worker manages and intercepts all requests from the sandbox.
-- **Resilient Logging**: Custom "Telemetry Extractor" prevents `DataCloneError` when relaying complex logs (like Errors or SW objects).
-- **Offline Support**: Cache-first strategy for the sandbox environment.
+- **`<safe-sandbox>` Custom Element**: Easy integration into any web project.
+- **Subdomain-based Isolation**: High-security barrier between Host (`localhost`) and Sandbox (`sandbox.localhost`).
+- **Network Virtualization**: An allowlist-based firewall managed via Service Workers.
+- **Static-First with Optional Proxy**: Transparent bypass for allowlisted external APIs via a server-side proxy. Works 100% statically for CORS-enabled APIs; requires a host-side handler (e.g., `/_proxy`) for non-CORS targets.
+- **Ephemeral & Resilient**: Stateless Service Worker that automatically re-configs from the Host element upon reconnection.
+- **In-Memory Virtual Files**: Inject mock data into the sandbox's filesystem without actual disk writes.
 
 ## Architecture
+
 ```mermaid
 graph TD
-    Host["Host (localhost:3333)"] --> |postMessage| Manager["Sandbox Manager (127.0.0.1:3333)"]
-    Manager --> |postMessage| Executor["Executor Iframe (127.0.0.1:3333)"]
-    Executor --> |Console Proxy| Manager
-    Manager --> |Resilient Relay| Host
-    SW["Service Worker (127.0.0.1)"] -.-> |Intercepts| Executor
+    Host["Host (localhost:3333)"] -- "PostMessage (Rules/Code)" --> Element["&lt;safe-sandbox&gt; Custom Element"]
+    Element -- "Iframe Embed" --> Sandbox["Sandbox (sandbox.localhost:3333)"]
+    Sandbox -- "Fetch Request" --> SW["Sandbox Service Worker"]
+    SW -- "Allowlist Check" --> Decision{"Is Allowed?"}
+    Decision -- "No" --> Block["403 Forbidden"]
+    Decision -- "Yes (External)" --> Proxy["Server /_proxy"]
+    Decision -- "Yes (Internal)" --> Assets["Static Assets"]
+    Proxy -- "Fetch/Inject CORS" --> API["External API (e.g. JSONPlaceholder)"]
 ```
 
-## Getting Started
-1. **Install Dependencies**: `bun install`
-2. **Start Server**: `bun server.ts`
-3. **Open Browser**: Navigate to [http://localhost:3333](http://localhost:3333)
+## Security Model
 
-## Implementation Details
+1.  **Origin Isolation**: The sandbox runs on a dedicated subdomain. Cookies and LocalStorage are not shared with the host.
+2.  **Firewall-by-Default**: Every outgoing request from the sandbox is intercepted. Any request not in your `allow` list is blocked with a 403.
+3.  **CSP Hardening**: The server enforces strict Content Security Policies that prevent malicious frames and restrict script execution sources.
 
-### Two-Origin Strategy
-Browsers treat `localhost` and `127.0.0.1` as distinct origins. This allows the sandbox to be "cross-origin" from the host while sharing the same server process. This is the simplest way to test Service Worker interception locally.
+## Future Work
 
-### Resilient Relay
-To avoid `DataCloneError` when sending results via `postMessage`, we use a **Metadata Extractor**. It recursively converts non-cloneable browser objects (like `ServiceWorkerRegistration`, `DOM Nodes`, or `Error` objects) into plain JSON descriptors.
+- [ ] **WS Connections**: Implement    - [x] Update documentation for static-first approach <!-- id: 404 -->
+    - [x] Refine Playground UI (JSON editor + Presets) <!-- id: 405 -->
+    - [x] Fix UI log colors and enhance error hints <!-- id: 406 -->
+Evaluate against `playground-elements` for developer experience.
+- [ ] **Security Audits**: Automated CSP validation on startup.
 
----
+## Service Worker Caching Strategies
 
-## Troubleshooting
+The sandbox Service Worker supports three caching strategies for local assets (`executor.html`, `telemetry.js`), controlled via the `?strategy` URL parameter during registration:
 
-### Clearing Stale Cache
-If you make changes to the Service Worker (`sw.js`) or the sandbox logic and they don't seem to apply:
+1.  **`network-first` (Default)**: Best for safe development and reliable offline support. Tries the network first, falls back to cache if offline.
+2.  **`network-only`**: Always and only gets the newest version from network, but doesn't work offline (PWA). UseUseful for debugging latest changes without any cache interference.
+3.  **`cache-first`**: Uses cached assets instantly but **beware of stale code** during development.
 
-1. **Open DevTools**: Press `F12` or `Cmd+Option+I`.
-2. **Go to Application Tab**: Select "Application" from the top menu.
-3. **Storage Section**:
-   - Click **"Storage"** on the left sidebar.
-   - Click **"Clear site data"** (ensure "Unregister service workers" is checked).
-4. **Origin Specifics**: Repeat this process for **BOTH** `http://localhost:3333` and `http://127.0.0.1:3333`.
-5. **Hard Refresh**: Use `Cmd + Shift + R` (Mac) or `Ctrl + F5` (Windows) on the main Host page.
+**Usage:**
+```javascript
+// In client/index.html or your host app
+navigator.serviceWorker.register("./sw.js?strategy=network-first");
+```
 
-### SW Status "Disconnected"
-If the status badge stays gray or red:
-- Check if you are on `localhost:3333`. The sandbox won't register correctly if the origin isn't secure (Localhost/127.0.0.1 are considered secure by browsers).
-- Ensure no other process is using port `3333`.
+> [!WARNING]
+> **Stale Cache Trap**: If you use `cache-first` (or previously had a strong cache policy), you may see old versions of the sandbox even after deploying updates. If `sandbox/executor.html` changes, users effectively need a new Service Worker. The `network-first` default avoids this loop by always checking for updates.
+
+## Testing
+
+Run the included Playwright suite to verify isolation and network rules:
+```bash
+npx playwright test
+```

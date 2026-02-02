@@ -1,5 +1,10 @@
-import { serve } from "bun"
+import { serve, type Server } from "bun"
 import { join } from "path"
+
+/**
+ * SafeSandbox Server
+ * Handles Host assets (localhost:3333) and Sandbox assets (sandbox.localhost:3333).
+ */
 
 const PORT = 3333
 
@@ -7,15 +12,15 @@ console.log(`Server running at:`)
 console.log(`- Host:    http://localhost:${PORT}`)
 console.log(`- Sandbox: http://sandbox.localhost:${PORT}`)
 
-serve({
+const server = {
     port: PORT,
-    async fetch(req) {
+    async fetch(req: Request): Promise<Response> {
         const url = new URL(req.url)
         const hostHeader = req.headers.get("host") || ""
         const isSandboxSubdomain = hostHeader.startsWith("sandbox.")
         let path = url.pathname
 
-        // 1. CORS Proxy (must be before path mapping)
+        // 1. CORS Proxy (Optional enhancement)
         if (path === "/_proxy") {
             const targetUrl = url.searchParams.get("url")
             const proxyHeaders = new Headers()
@@ -60,7 +65,7 @@ serve({
             }
         }
 
-        // 2. Router
+        // 2. Router & Subdomain Mapping
         if (isSandboxSubdomain) {
             if (path === "/sw.js") path = "/sandbox/sw.js"
             else if (!path.startsWith("/sandbox/")) {
@@ -71,7 +76,7 @@ serve({
             if (path === "/SafeSandbox.js") {
                 path = "/client/SafeSandbox.js"
             } else if (path === "/sw.js") {
-                // Forward legacy SW requests to sandbox SW (for demo purposes)
+                // Fallback for demo: serve Sandbox SW from root if needed
                 path = "/sandbox/sw.js"
             } else if (
                 !path.startsWith("/client/") &&
@@ -95,24 +100,29 @@ serve({
                 "Cache-Control": "no-store, no-cache, must-revalidate",
             }
 
+            // Allow SW to register at root
             if (path.endsWith("sw.js"))
                 responseHeaders["Service-Worker-Allowed"] = "/"
 
             if (isSandboxSubdomain || path.startsWith("/sandbox/")) {
+                // Sandbox Security Policy
                 responseHeaders["Content-Security-Policy"] =
                     "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src *;"
             } else {
+                // Host Security Policy (Strict Subdomain Framing)
                 const sandboxOrigin = `http://sandbox.localhost:${PORT}`
                 responseHeaders["Content-Security-Policy"] =
-                    `default-src 'self' ${sandboxOrigin} http://127.0.0.1:${PORT}; ` +
+                    `default-src 'self' ${sandboxOrigin}; ` +
                     `script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; ` +
-                    `frame-src ${sandboxOrigin} http://127.0.0.1:${PORT};`
+                    `frame-src ${sandboxOrigin};`
             }
 
-            return new Response(file, { headers: responseHeaders })
+            return new Response(file as any, { headers: responseHeaders })
         }
 
         console.log(`[Server] 404: ${path} (from ${hostHeader})`)
         return new Response("Not Found", { status: 404 })
     },
-})
+}
+
+serve(server)

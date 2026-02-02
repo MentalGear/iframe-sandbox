@@ -54,6 +54,42 @@
 
         console.log("Executor loaded. Origin:", document.domain);
 
+        // Listen for Service Worker Telemetry (Firewall events)
+        // Listen for Service Worker Telemetry (Firewall events) via BroadcastChannel
+        const telemetryChannel = new BroadcastChannel('sandbox-telemetry');
+        telemetryChannel.onmessage = (event) => {
+            console.log("[Executor] Received telemetry via channel:", event.data);
+            if (event.data && event.data.type === 'SW_TELEMETRY') {
+                const { category, logType, message, ...details } = event.data;
+                const type = logType === 'error' ? 'error' : 'log';
+                
+                // Format details for console
+                const args = [`[firewall] ${message}`];
+                if (Object.keys(details).length > 0) args.push(details);
+
+                try {
+                    window.parent.postMessage({ 
+                        type: 'LOG', 
+                        depth: 'executor', 
+                        logType: type, 
+                        category: category || 'network',
+                        args: args.map(arg => extractMetadata(arg))
+                    }, "*");
+                } catch (e) { console.error("Relay Error", e); }
+            }
+        };
+
+        // Global Error Hooks for Unhandled Rejections (e.g. Fetch Failures)
+        window.addEventListener('unhandledrejection', (event) => {
+           console.error("[Executor] Unhandled Rejection:", event.reason);
+           window.parent.postMessage({ 
+                type: 'LOG', 
+                depth: 'executor', 
+                logType: 'error', 
+                args: [extractMetadata(event.reason)]
+            }, "*");
+        });
+
         window.addEventListener('message', (event) => {
             if (event.data && event.data.type === 'EXECUTE') {
                 try {

@@ -37,7 +37,6 @@ class SafeSandbox extends HTMLElement {
 
     /**
      * Executes JavaScript code within the sandbox.
-     * @param {string} code
      */
     execute(code) {
         if (!this._iframe.contentWindow) return
@@ -50,7 +49,6 @@ class SafeSandbox extends HTMLElement {
 
     /**
      * Sets network rules for the sandbox Service Worker.
-     * @param {Object} rules { files: {}, blocks: [], allow: [] }
      */
     setNetworkRules(rules) {
         this._networkRules = rules
@@ -68,7 +66,7 @@ class SafeSandbox extends HTMLElement {
                 targetOrigin,
             )
         } catch (e) {
-            console.error("Failed to send network rules:", e)
+            // Check origin before complaining, but keep simple
         }
     }
 
@@ -89,12 +87,11 @@ class SafeSandbox extends HTMLElement {
         const data = event.data
         if (!data) return
 
-        // Dispatch as custom events
-        if (data.type === "LOG") {
-            this.dispatchEvent(new CustomEvent("log", { detail: data }))
-        } else if (data === "READY") {
+        if (data === "READY") {
             this.dispatchEvent(new CustomEvent("ready"))
-            this._sendNetworkRules() // Re-apply rules on every ready event
+            this._sendNetworkRules()
+        } else if (data.type === "LOG") {
+            this.dispatchEvent(new CustomEvent("log", { detail: data }))
         } else {
             this.dispatchEvent(new CustomEvent("message", { detail: data }))
         }
