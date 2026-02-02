@@ -112,11 +112,11 @@ PORT=3333 HOST=localhost bun server.ts
 3. **CSP Hardening**: Strict policies per origin
 
 ## Future Work
-
-- [ ] **captureContentDebug**: When enabled, inject telemetry into `loadSrc()` content to capture console.log/error and thrown exceptions from external URLs
 - [ ] **WebSocket Support**: Intercept and filter WS connections
-- [ ] **Security Audits**: Automated CSP validation on startup
+
 - [ ] **MessageChannel IPC**: Replace postMessage wildcards with secure port transfer
+- [ ] **Security Audits**: Automated CSP validation on startup
+- [ ] **captureContentDebug**: When enabled, inject telemetry into `loadSrc()` content to capture console.log/error and thrown exceptions from external URLs
 
 ## Service Worker Caching
 

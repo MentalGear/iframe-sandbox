@@ -9,22 +9,7 @@ declare const self: ServiceWorkerGlobalScope
 
 // ============ IPC Utilities (inlined) ============
 
-interface LogMessage {
-    type: "LOG"
-    timestamp: number
-    source: "outer" | "inner"
-    level: "log" | "warn" | "error"
-    area?: "network" | "security" | "user-code"
-    message: string
-    data?: Record<string, unknown>
-}
-
-interface NetworkRules {
-    allow?: string[]
-    proxyUrl?: string // e.g., '/_proxy' or 'https://proxy.example.com'
-    files?: Record<string, string>
-    cacheStrategy?: "network-first" | "cache-first" | "network-only"
-}
+import type { LogMessage, NetworkRules } from "../lib/types"
 
 const ipc = {
     async send(
