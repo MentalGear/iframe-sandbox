@@ -67,20 +67,23 @@ const server = {
         if (isSandboxSubdomain) {
             // Sandbox subdomain routing
             if (path === "/outer-sw.js") {
-                path = "/sandbox/outer-sw.ts"
+                path = "/src/sandbox/outer-sw.ts"
             } else if (path === "/" || path === "/index.html") {
-                path = "/sandbox/outer-frame.html"
-            } else if (!path.startsWith("/sandbox/")) {
-                path = "/sandbox" + path
+                path = "/src/sandbox/outer-frame.html"
+            } else if (path.startsWith("/sandbox/")) {
+                path = "/src" + path
+            } else if (!path.startsWith("/src/sandbox/")) {
+                path = "/src/sandbox" + path
             }
         } else {
             // Host domain routing
             if (path === "/SafeSandbox.js" || path === "/lib/SafeSandbox.js") {
-                path = "/lib/SafeSandbox.ts"
+                path = "/src/lib/SafeSandbox.ts"
+            } else if (path.startsWith("/lib/")) {
+                path = "/src" + path
             } else if (
                 !path.startsWith("/playground/") &&
-                !path.startsWith("/lib/") &&
-                !path.startsWith("/sandbox/")
+                !path.startsWith("/src/")
             ) {
                 path = "/playground" + (path === "/" ? "/index.html" : path)
             }

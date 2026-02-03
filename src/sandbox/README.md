@@ -1,6 +1,6 @@
 # Sandbox Infrastructure
 
-This directory contains the core sandbox runtime that executes untrusted code in isolation.
+This directory (`src/sandbox/`) contains the core sandbox runtime that executes untrusted code in isolation.
 
 ## Files
 

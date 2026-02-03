@@ -222,9 +222,9 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
     <div id="logs">Waiting for sandbox...</div>
 
     <script src="state.ts"></script>
-    <script type="module" src="/lib/SafeSandbox.ts"></script>
+    <script type="module" src="/src/lib/SafeSandbox.ts"></script>
     <script type="module">
-        import { PRESETS } from '../lib/presets.ts';
+        import { PRESETS } from '../src/lib/presets.ts';
 
         const sandbox = document.getElementById('sandbox');
         const logsDiv = document.getElementById('logs');
