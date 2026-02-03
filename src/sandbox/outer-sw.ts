@@ -76,17 +76,47 @@ const ipc = {
 
 // ============ Service Worker ============
 
-const CACHE_NAME = "sandbox-cache-v11"
-const ASSETS_TO_CACHE = [
-    "/sandbox/outer-frame.html",
-    "/sandbox/inner-frame.html",
-]
+const CACHE_NAME = "sandbox-cache-v12"
+const ASSETS_TO_CACHE = ["/outer-frame.html", "/inner-frame.html"]
+
+// Helper to check content length against max limit
+async function checkContentLength(
+    response: Response,
+    maxLength: number | undefined,
+    requestUrl: string,
+    clientId: string,
+): Promise<Response | null> {
+    if (!maxLength) return null // No limit set
+
+    const contentLength = response.headers.get("content-length")
+    if (contentLength) {
+        const size = parseInt(contentLength, 10)
+        if (size > maxLength) {
+            const blockMsg = `Blocked: Response too large (${size} bytes > ${maxLength} limit)`
+            await ipc.send(
+                "error",
+                "security",
+                blockMsg,
+                { url: requestUrl, size, maxLength },
+                clientId,
+            )
+            return new Response(JSON.stringify({ error: blockMsg }), {
+                status: 413,
+                headers: { "Content-Type": "application/json" },
+            })
+        }
+    }
+    return null // Size OK or unknown
+}
 
 const params = new URL(self.location.href).searchParams
 const CACHE_STRATEGY = params.get("strategy") || "network-first"
 
 let networkRules: NetworkRules = {
     allow: [],
+    allowProtocols: ["http", "https"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    maxContentLength: undefined,
     proxyUrl: undefined,
     files: {},
     cacheStrategy: "network-first",
@@ -107,6 +137,20 @@ self.addEventListener("message", (event) => {
     if (event.data?.type === "SET_NETWORK_RULES") {
         networkRules = {
             allow: event.data.rules?.allow ?? [],
+            allowProtocols: event.data.rules?.allowProtocols ?? [
+                "http",
+                "https",
+            ],
+            allowMethods: event.data.rules?.allowMethods ?? [
+                "GET",
+                "POST",
+                "PUT",
+                "DELETE",
+                "PATCH",
+                "HEAD",
+                "OPTIONS",
+            ],
+            maxContentLength: event.data.rules?.maxContentLength ?? undefined,
             proxyUrl: event.data.rules?.proxyUrl ?? undefined,
             files: event.data.rules?.files ?? {},
             cacheStrategy: event.data.rules?.cacheStrategy ?? "network-first",
@@ -158,7 +202,54 @@ self.addEventListener("fetch", (event) => {
                 }
             }
 
-            // 3. Allowed Domains
+            // 3. Protocol Check
+            const protocol = url.protocol.replace(":", "") as "http" | "https"
+            const allowedProtocols = networkRules.allowProtocols ?? [
+                "http",
+                "https",
+            ]
+            if (!allowedProtocols.includes(protocol)) {
+                const blockMsg = `Blocked: ${protocol}:// not allowed (only ${allowedProtocols.join(", ")})`
+                await ipc.send(
+                    "error",
+                    "security",
+                    blockMsg,
+                    { url: event.request.url },
+                    event.clientId,
+                )
+                return new Response(JSON.stringify({ error: blockMsg }), {
+                    status: 403,
+                    headers: { "Content-Type": "application/json" },
+                })
+            }
+
+            // 4. Method Check
+            const method = event.request.method
+            const allowedMethods = networkRules.allowMethods ?? [
+                "GET",
+                "POST",
+                "PUT",
+                "DELETE",
+                "PATCH",
+                "HEAD",
+                "OPTIONS",
+            ]
+            if (!allowedMethods.includes(method)) {
+                const blockMsg = `Blocked: ${method} not allowed (only ${allowedMethods.join(", ")})`
+                await ipc.send(
+                    "error",
+                    "security",
+                    blockMsg,
+                    { url: event.request.url },
+                    event.clientId,
+                )
+                return new Response(JSON.stringify({ error: blockMsg }), {
+                    status: 403,
+                    headers: { "Content-Type": "application/json" },
+                })
+            }
+
+            // 5. Allowed Domains
             const allowList = networkRules.allow ?? []
             const isAllowed = allowList.some((domain) =>
                 url.hostname.endsWith(domain),
@@ -188,6 +279,16 @@ self.addEventListener("fetch", (event) => {
 
                     try {
                         const res = await fetch(proxyUrl)
+
+                        // Check content length limit
+                        const sizeBlock = await checkContentLength(
+                            res,
+                            networkRules.maxContentLength,
+                            event.request.url,
+                            event.clientId,
+                        )
+                        if (sizeBlock) return sizeBlock
+
                         const clonedRes = res.clone()
                         await ipc.send(
                             "log",
@@ -226,6 +327,16 @@ self.addEventListener("fetch", (event) => {
 
                 try {
                     const res = await fetch(event.request)
+
+                    // Check content length limit
+                    const sizeBlock = await checkContentLength(
+                        res,
+                        networkRules.maxContentLength,
+                        event.request.url,
+                        event.clientId,
+                    )
+                    if (sizeBlock) return sizeBlock
+
                     await ipc.send(
                         "log",
                         "network",

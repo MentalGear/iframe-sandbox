@@ -90,6 +90,10 @@
                 if (navigator.serviceWorker.controller) {
                     navigator.serviceWorker.controller.postMessage(data);
                 }
+                // Also handle execution policy if present
+                if (data.rules?.execution) {
+                    updateSandboxAttributes(data.rules.execution);
+                }
             } else if (data.type === 'RESET') {
                 // Unregister SW from sandbox origin, then signal host to reload
                 navigator.serviceWorker.getRegistrations().then(regs => {
@@ -99,6 +103,23 @@
                 });
             }
         });
+
+        // Helper to build sandbox attribute from execution policy
+        function updateSandboxAttributes(execution) {
+            const attrs = ['allow-same-origin']; // Always needed for SW
+            
+            if (execution.scripts !== false) attrs.push('allow-scripts');
+            if (execution.formSending !== false) attrs.push('allow-forms');
+            if (execution.popups === true) attrs.push('allow-popups');
+            if (execution.modals !== false) attrs.push('allow-modals');
+            if (execution.downloads === true) attrs.push('allow-downloads');
+            
+            const newSandbox = attrs.join(' ');
+            if (innerFrame.sandbox !== newSandbox) {
+                innerFrame.sandbox = newSandbox;
+                console.log('[outer-frame] Updated sandbox:', newSandbox);
+            }
+        }
 
         // 3. Messages from Inner Frame -> forward to Host
         window.addEventListener('message', (event) => {

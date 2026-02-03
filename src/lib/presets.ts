@@ -120,16 +120,26 @@ fetch(sourceUrl)
     localHtml: {
         id: "localHtml",
         label: "Local HTML Page",
-        rules: { allow: ["picsum.photos"], proxyUrl: "/_proxy" },
-        code: `// Load local test page with CSS, JS, and images
+        rules: {
+            allow: ["localhost", "picsum.photos", "fastly.picsum.photos"],
+            proxyUrl: "/_proxy",
+        },
+        code: `// Load local test page from host origin via proxy
 console.log("Loading local test page...");
 
-fetch("/playground/test-assets/test-page.html")
+// Fetch from host origin (sandbox only serves 3 infrastructure files)
+const hostOrigin = window.location.origin.replace("sandbox.", "");
+const pageUrl = hostOrigin + "/playground/test-assets/test-page.html";
+
+fetch(pageUrl)
   .then(r => r.text())
   .then(html => {
     console.log("HTML loaded, rendering...");
+    // Inject base tag so relative paths resolve to host origin
+    const baseTag = '<base href="' + hostOrigin + '/playground/test-assets/">';
+    const htmlWithBase = html.replace('<head>', '<head>' + baseTag);
     document.open();
-    document.write(html);
+    document.write(htmlWithBase);
     document.close();
   })
   .catch(err => console.error("Failed:", err));`,

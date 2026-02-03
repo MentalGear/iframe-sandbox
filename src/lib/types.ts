@@ -3,10 +3,25 @@
  */
 
 export interface NetworkRules {
+    // Network Firewall (Service Worker)
     allow?: string[]
-    proxyUrl?: string // e.g., '/_proxy' or 'https://proxy.example.com'
+    allowProtocols?: ("http" | "https")[]
+    allowMethods?: string[]
+    maxContentLength?: number
+    proxyUrl?: string
     files?: Record<string, string>
     cacheStrategy?: "network-first" | "cache-first" | "network-only"
+
+    // Execution Firewall (iframe sandbox attribute)
+    execution?: ExecutionPolicy
+}
+
+export interface ExecutionPolicy {
+    scripts?: boolean // allow-scripts (default: true)
+    formSending?: boolean // allow-forms (default: true)
+    popups?: boolean // allow-popups (default: false)
+    modals?: boolean // allow-modals (default: true)
+    downloads?: boolean // allow-downloads (default: false)
 }
 
 export interface LogMessage {

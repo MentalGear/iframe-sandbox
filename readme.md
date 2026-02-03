@@ -47,6 +47,29 @@ Sandbox (sandbox.localhost:3333)
     +-- outer-sw.ts          # Network firewall
 ```
 
+## Two-Layer Firewall
+
+SafeSandbox uses two independent security layers:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Network Firewall (Service Worker)                   │
+│ Controls: domains, protocols, methods, size, rate   │
+└─────────────────────────────────────────────────────┘
+                         │
+┌─────────────────────────────────────────────────────┐
+│ Execution Firewall (iframe sandbox attribute)       │
+│ Controls: scripts, forms, popups, modals, downloads │
+└─────────────────────────────────────────────────────┘
+```
+
+| Layer | Mechanism | What It Controls |
+|-------|-----------|------------------|
+| **Network** | Service Worker | What URLs can be fetched, HTTP methods, response size |
+| **Execution** | iframe sandbox attr | What capabilities the sandboxed code has |
+
+See [security_issues.md](security_issues.md) for known risks and mitigations.
+
 ## How It Works
 
 ```
@@ -57,21 +80,22 @@ Host Page
             +-- iframe[sandbox] -> outer-frame.html (sandbox.localhost)
                     |
                     +-- Registers Service Worker (outer-sw.ts)
-                    +-- iframe (no sandbox attr) -> inner-frame.html
+                    +-- iframe[sandbox] -> inner-frame.html
                             |
                             +-- User code runs here (eval)
                             +-- All fetch() intercepted by SW
 ```
 
 **Double iframe design:**
-1. **Outer frame** (`outer-frame.html`): Has `sandbox` attribute restricting capabilities. Registers the Service Worker (SW) and relays messages between host and inner frame.
-2. **Inner frame** (`inner-frame.html`): No sandbox attribute (inherits origin isolation). Executes user code via `eval()`. Console is proxied to send logs to parent.
+1. **Outer frame** (`outer-frame.html`): Registers the Service Worker (SW) and relays messages between host and inner frame.
+2. **Inner frame** (`inner-frame.html`): Executes user code via `eval()`. Console is proxied to send logs to parent. Has dynamic sandbox attributes based on execution config.
 
 **Why this works:**
-- The subdomain (`sandbox.localhost`) provides full origin isolation - no access to host (main top-level window) cookies, storage, or DOM
-- The Service Worker (SW) intercepts all network requests from both frames, enforcing the allowlist
-- CSP `connect-src *` lets the SW make any request, then SW decides what's actually allowed
+- The subdomain (`sandbox.localhost`) provides full origin isolation - no access to host cookies, storage, or DOM
+- The Service Worker (SW) intercepts all network requests, enforcing the allowlist
+- Permissive CSP lets the SW make any request, then SW decides what's actually allowed
 - Messages flow: Host <-> Outer Frame <-> Inner Frame, with strict origin checks
+
 
 ## API
 
@@ -101,10 +125,23 @@ sandbox.setNetworkRules(rules)    // Set network rules
 
 ```ts
 interface NetworkRules {
+  // Network Firewall (Service Worker)
   allow?: string[]              // Allowed domains (default: [])
-  proxyUrl?: string             // (e.g., '/_proxy') url of a server that changes CORS headers of a request and passes them to the sandbox. Important: you should be in control of this.
+  allowProtocols?: ('http' | 'https')[]  // Allowed protocols (default: both)
+  allowMethods?: string[]       // Allowed HTTP methods (default: all)
+  maxContentLength?: number     // Max response size in bytes
+  proxyUrl?: string             // CORS proxy URL (e.g., '/_proxy'), url of a server that changes CORS headers of a request and passes them to the sandbox. Important: you should be in control of this.
   files?: Record<string, string> // Virtual files (default: {})
   cacheStrategy?: 'network-first' | 'cache-first' | 'network-only'
+  
+  // Execution Firewall (iframe sandbox attribute)
+  execution?: {
+    scripts?: boolean      // allow-scripts (default: true)
+    formSending?: boolean  // allow-forms (default: true)
+    popups?: boolean       // allow-popups (default: false)
+    modals?: boolean       // allow-modals (default: true)
+    downloads?: boolean    // allow-downloads (default: false)
+  }
 }
 ```
 
@@ -150,7 +187,8 @@ Important caveat: Service Workers cannot intercept WebSocket handshakes. So if y
 - [ ] **MessageChannel IPC**: Replace postMessage wildcards with secure port transfer
 - [ ] **Security Audits**: Automated CSP validation on startup
 - [ ] **captureContentDebug**: When enabled, inject telemetry into `loadSrc()` content to capture console.log/error and thrown exceptions from external URLs
-- [] add quickjs sandbox: https://sebastianwessel.github.io/quickjs/use-cases/ai-generated-code.html
+- [ ] **CSP-based Execution Control**: For finer control like blocking `eval()` while allowing scripts, or blocking inline scripts while allowing external - implement via meta tag injection in SW. Current execution firewall uses iframe sandbox attributes which are coarse-grained.
+- [ ] add quickjs sandbox: https://sebastianwessel.github.io/quickjs/use-cases/ai-generated-code.html
 
 
 ## Service Worker Caching

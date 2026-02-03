@@ -1,9 +1,11 @@
 import { serve } from "bun"
-import { join } from "path"
+import { handleSandboxRequest } from "./server/sandbox-handler"
+import { handleHostRequest } from "./server/host-handler"
+import { handleProxyRequest } from "./server/proxy-handler"
 
 /**
- * SafeSandbox Server
- * Handles Host assets (localhost) and Sandbox assets (sandbox.localhost).
+ * SafeSandbox Development Server
+ * Routes requests to appropriate handlers based on subdomain.
  */
 
 const PORT = parseInt(process.env.PORT || "3333", 10)
@@ -14,168 +16,23 @@ console.log(`Server running at:`)
 console.log(`- Host:    http://${HOST}:${PORT}`)
 console.log(`- Sandbox: http://${SANDBOX_HOST}:${PORT}`)
 
-const server = {
+serve({
     port: PORT,
     async fetch(req: Request): Promise<Response> {
         const url = new URL(req.url)
         const hostHeader = req.headers.get("host") || ""
         const isSandboxSubdomain = hostHeader.startsWith("sandbox.")
-        let path = url.pathname
 
-        // 1. CORS Proxy
-        if (path === "/_proxy") {
-            const targetUrl = url.searchParams.get("url")
-            const proxyHeaders = new Headers()
-            proxyHeaders.set("Access-Control-Allow-Origin", "*")
-            proxyHeaders.set(
-                "Access-Control-Allow-Methods",
-                "GET, POST, OPTIONS",
-            )
-            proxyHeaders.set("Access-Control-Allow-Headers", "*")
-
-            if (req.method === "OPTIONS")
-                return new Response(null, { headers: proxyHeaders })
-            if (!targetUrl)
-                return new Response("Missing url", {
-                    status: 400,
-                    headers: proxyHeaders,
-                })
-
-            console.log(`[Proxy] Fetching: ${targetUrl}`)
-            try {
-                const proxyRes = await fetch(targetUrl)
-                const resHeaders = new Headers(proxyRes.headers)
-                resHeaders.delete("content-encoding")
-                resHeaders.delete("content-length")
-                resHeaders.delete("transfer-encoding")
-                resHeaders.delete("connection")
-                resHeaders.set("Access-Control-Allow-Origin", "*")
-                return new Response(proxyRes.body, {
-                    status: proxyRes.status,
-                    statusText: proxyRes.statusText,
-                    headers: resHeaders,
-                })
-            } catch (e: any) {
-                return new Response(`Proxy Error: ${e.message}`, {
-                    status: 502,
-                    headers: proxyHeaders,
-                })
-            }
+        // 1. CORS Proxy (available on both origins)
+        if (url.pathname === "/_proxy") {
+            return handleProxyRequest(req, url)
         }
 
-        // 2. Router & Subdomain Mapping
+        // 2. Route to appropriate handler
         if (isSandboxSubdomain) {
-            // Sandbox subdomain routing
-            if (path === "/outer-sw.js") {
-                path = "/src/sandbox/outer-sw.ts"
-            } else if (path === "/" || path === "/index.html") {
-                path = "/src/sandbox/outer-frame.html"
-            } else if (path.startsWith("/sandbox/")) {
-                path = "/src" + path
-            } else if (!path.startsWith("/src/sandbox/")) {
-                path = "/src/sandbox" + path
-            }
+            return handleSandboxRequest(req, url)
         } else {
-            // Host domain routing
-            if (path === "/SafeSandbox.js" || path === "/lib/SafeSandbox.js") {
-                path = "/src/lib/SafeSandbox.ts"
-            } else if (path.startsWith("/lib/")) {
-                path = "/src" + path
-            } else if (
-                !path.startsWith("/playground/") &&
-                !path.startsWith("/src/")
-            ) {
-                path = "/playground" + (path === "/" ? "/index.html" : path)
-            }
+            return handleHostRequest(req, url)
         }
-
-        // 3. Serve Files
-        if (path.includes(".."))
-            return new Response("Forbidden", { status: 403 })
-
-        const relPath = path.startsWith("/") ? path.slice(1) : path
-        const filePath = join(process.cwd(), relPath)
-        const file = Bun.file(filePath)
-
-        if (await file.exists()) {
-            const responseHeaders: Record<string, string> = {
-                "Content-Type": file.type,
-                "Cache-Control": "no-store, no-cache, must-revalidate",
-            }
-
-            // Transpile TypeScript files for browser
-            if (path.endsWith(".ts")) {
-                responseHeaders["Content-Type"] = "application/javascript"
-
-                try {
-                    const result = await Bun.build({
-                        entrypoints: [filePath],
-                        target: "browser",
-                        format: "esm",
-                    })
-
-                    if (result.success && result.outputs.length > 0) {
-                        const jsCode = await result.outputs[0].text()
-
-                        // Add headers and return transpiled JS
-                        if (path.includes("outer-sw"))
-                            responseHeaders["Service-Worker-Allowed"] = "/"
-
-                        if (
-                            isSandboxSubdomain ||
-                            path.startsWith("/sandbox/")
-                        ) {
-                            responseHeaders["Content-Security-Policy"] =
-                                "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; connect-src *;"
-                        } else {
-                            const sandboxOrigin = `http://${SANDBOX_HOST}:${PORT}`
-                            responseHeaders["Content-Security-Policy"] =
-                                `default-src 'self' ${sandboxOrigin}; ` +
-                                `script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; ` +
-                                `frame-src ${sandboxOrigin};`
-                        }
-
-                        return new Response(jsCode, {
-                            headers: responseHeaders,
-                        })
-                    } else {
-                        console.error(
-                            `[Server] Build failed for ${path}:`,
-                            result.logs,
-                        )
-                        return new Response("Build Error", { status: 500 })
-                    }
-                } catch (e: any) {
-                    console.error(`[Server] Transpile error for ${path}:`, e)
-                    return new Response(`Transpile Error: ${e.message}`, {
-                        status: 500,
-                    })
-                }
-            }
-
-            // Allow SW to register at root
-            if (path.includes("outer-sw"))
-                responseHeaders["Service-Worker-Allowed"] = "/"
-
-            if (isSandboxSubdomain || path.startsWith("/sandbox/")) {
-                // Sandbox Security Policy
-                responseHeaders["Content-Security-Policy"] =
-                    "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; connect-src *;"
-            } else {
-                // Host Security Policy
-                const sandboxOrigin = `http://${SANDBOX_HOST}:${PORT}`
-                responseHeaders["Content-Security-Policy"] =
-                    `default-src 'self' ${sandboxOrigin}; ` +
-                    `script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; ` +
-                    `frame-src ${sandboxOrigin};`
-            }
-
-            return new Response(file as any, { headers: responseHeaders })
-        }
-
-        console.log(`[Server] 404: ${path} (from ${hostHeader})`)
-        return new Response("Not Found", { status: 404 })
     },
-}
-
-serve(server)
+})

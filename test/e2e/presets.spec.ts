@@ -1,5 +1,5 @@
 import { test, expect, Page } from "@playwright/test"
-import { PRESETS } from "../../lib/presets"
+import { PRESETS } from "../../src/lib/presets"
 
 /**
  * Helper: Wait for sandbox to be ready and set network rules

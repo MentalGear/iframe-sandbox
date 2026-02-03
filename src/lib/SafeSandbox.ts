@@ -107,7 +107,7 @@ class SafeSandbox extends HTMLElement {
                 "sandbox",
                 "allow-scripts allow-forms allow-popups allow-modals allow-same-origin",
             )
-            this._iframe.src = `${this._sandboxOrigin}/sandbox/outer-frame.html`
+            this._iframe.src = `${this._sandboxOrigin}/outer-frame.html`
         }
     }
 
