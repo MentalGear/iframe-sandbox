@@ -173,12 +173,7 @@
             <span class="label" style="margin-bottom: 0;">Playground Preset:</span>
             <select id="presetSelect" onchange="loadPreset()">
                 <option value="none">-- Select preset --</option>
-                <option value="jsonplaceholder">JSONPlaceholder (CORS OK)</option>
-                <option value="google">Google (CORS Proxy)</option>
-                <option value="blocked">Block All</option>
-                <option value="virtualfiles">Virtual Files</option>
-                <option value="caching">Cache Strategy</option>
-                <option value="security">Security Isolation</option>
+                <!-- Dynamically populated -->
                 <option value="custom">Custom Preset (auto-saves)</option>
             </select>
         </div>
@@ -217,7 +212,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
         </div>
         <div class="card">
             <span class="label">Sandbox View (Strict Subdomain):</span>
-            <safe-sandbox id="sandbox" sandbox-origin="http://sandbox.localhost:3333"></safe-sandbox>
+            <safe-sandbox id="sandbox" sandbox-origin="http://sandbox.localhost:3333" cacheStrategy="network-only"></safe-sandbox>
         </div>
     </div>
 
@@ -228,10 +223,27 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
 
     <script src="state.ts"></script>
     <script type="module" src="/lib/SafeSandbox.ts"></script>
-    <script>
+    <script type="module">
+        import { PRESETS } from '../lib/presets.ts';
+
         const sandbox = document.getElementById('sandbox');
         const logsDiv = document.getElementById('logs');
         let firstLog = true;
+
+        // Populate presets dropdown
+        const select = document.getElementById('presetSelect');
+        const customOption = select.querySelector('option[value="custom"]');
+        
+        Object.values(PRESETS).forEach(preset => {
+            const option = document.createElement('option');
+            option.value = preset.id;
+            option.textContent = preset.label;
+            select.insertBefore(option, customOption);
+        });
+
+        window.appendLocalLog = (msg) => {
+            appendLog({ source: 'playground', message: msg, level: 'log' });
+        };
 
         sandbox.addEventListener('ready', () => {
             document.getElementById('sandbox-status').textContent = 'Sandbox: Ready';
@@ -246,8 +258,8 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
 
         window.addEventListener('load', () => {
             const loaded = playground.loadState();
-            if (!loaded) loadPreset(); // Load default if no saved state
-            else applyNetworkRules(); // Apply rules from saved state
+            if (!loaded) window.loadPreset(); // Load default if no saved state
+            else window.applyNetworkRules(); // Apply rules from saved state
         });
 
         function appendLog(data) {
@@ -286,82 +298,13 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             }
             
             logsDiv.prepend(div);
-        }
 
-        // Helper for local playground messages (not from sandbox)
-        function appendLocalLog(message) {
-            const div = document.createElement('div');
-            div.className = 'log-entry';
-            div.innerHTML = `<span style="color: #888">[playground]</span> <span>${message}</span>`;
-            logsDiv.prepend(div);
-            firstLog = false;
-        }
-
-        const PRESETS = {
-            jsonplaceholder: {
-                rules: { allow: ['jsonplaceholder.typicode.com'] },
-                code: `// JSONPlaceholder - CORS-friendly API
-console.log("Fetching from JSONPlaceholder...");
-fetch("https://jsonplaceholder.typicode.com/todos/1")
-  .then(r => r.json())
-  .then(data => console.log("Got:", data));`
-            },
-            google: {
-                rules: { allow: ['www.google.com'], proxyUrl: '/_proxy' },
-                code: `// Google - Needs CORS proxy
-console.log("Fetching Google via proxy...");
-fetch("https://www.google.com")
-  .then(r => console.log("Status:", r.status));`
-            },
-            blocked: {
-                rules: { allow: [] },
-                code: `// All external blocked
-console.log("Attempting blocked request...");
-fetch("https://example.com");`
-            },
-            virtualfiles: {
-                rules: { files: { '/config.json': '{"version": "1.0"}', '/data.txt': 'Hello World' } },
-                code: `// Virtual files demo
-fetch("/config.json").then(r => r.json()).then(d => console.log("Config:", d));
-fetch("/data.txt").then(r => r.text()).then(t => console.log("Data:", t));`
-            },
-            caching: {
-                rules: { allow: ['jsonplaceholder.typicode.com'], cacheStrategy: 'cache-first' },
-                code: `// Cache-first strategy demo
-console.log("First fetch (network)...");
-fetch("https://jsonplaceholder.typicode.com/posts/1");
-setTimeout(() => {
-  console.log("Second fetch (should hit cache)...");
-  fetch("https://jsonplaceholder.typicode.com/posts/1");
-}, 1000);`
-            },
-            security: {
-                rules: {},
-                code: `// Security isolation tests
-console.log("Testing isolation...");
-
-// Test 1: alert() is silently blocked (no modal appears)
-alert("If you see this modal, sandbox is broken!");
-console.log("PASS: alert() called (check console for sandbox warning)");
-
-// Test 2: window.top should be inaccessible
-try {
-  const top = window.top.location.href;
-  console.error("FAIL: window.top accessible:", top);
-} catch (e) {
-  console.log("PASS: window.top blocked");
-}
-
-// Test 3: document.cookie should be isolated
-document.cookie = "sandbox_test=123";
-const cookies = document.cookie;
-console.log("Sandbox cookies:", cookies);
-if (cookies.includes("sandbox_test")) {
-  console.log("PASS: Sandbox can set cookies");
-}
-console.log("Check host devtools - should NOT see 'sandbox_test' cookie");`
+            // Tag for filtering
+            if (window.playground && window.playground.tagLog) {
+                const category = area === 'network' ? 'network' : (area === 'security' ? 'security' : (source === 'inner' ? 'user-code' : 'host'));
+                window.playground.tagLog(div, category);
             }
-        };
+        }
 
         window.loadPreset = () => {
             const val = document.getElementById('presetSelect').value;
@@ -377,7 +320,7 @@ console.log("Check host devtools - should NOT see 'sandbox_test' cookie");`
             document.getElementById('rulesEditor').value = JSON.stringify(preset.rules, null, 2);
             document.getElementById('code').value = preset.code;
             
-            applyNetworkRules();
+            window.applyNetworkRules();
             playground.saveState();
         }
 
@@ -389,23 +332,23 @@ console.log("Check host devtools - should NOT see 'sandbox_test' cookie");`
         window.onRulesInput = () => {
             playground.triggerCustomMode();
             playground.saveState();
-            debounceApplyRules();
+            window.debounceApplyRules();
         };
 
         let debounceTimer;
         window.debounceApplyRules = () => {
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
-                applyNetworkRules();
+                window.applyNetworkRules();
             }, 500);
         }
 
-        function applyNetworkRules() {
+        window.applyNetworkRules = () => {
             const rulesStr = document.getElementById('rulesEditor').value;
             try {
                 const rules = JSON.parse(rulesStr);
                 sandbox.setNetworkRules(rules);
-                appendLocalLog('Network rules applied.');
+                window.appendLocalLog('Network rules applied.');
                 
                 // Keep UI toggle in sync
                 const proxyToggle = document.getElementById('proxyToggle');
@@ -422,8 +365,8 @@ console.log("Check host devtools - should NOT see 'sandbox_test' cookie");`
         window.runCode = () => {
             const code = document.getElementById('code').value;
             // Ensure any pending rules are applied before running
-            applyNetworkRules();
-            appendLocalLog('Executing code...');
+            window.applyNetworkRules();
+            window.appendLocalLog('Executing code...');
             sandbox.execute(code);
         }
 
@@ -443,29 +386,35 @@ console.log("Check host devtools - should NOT see 'sandbox_test' cookie");`
                 proxyToggle.style.background = hasProxy ? 'var(--primary)' : '#444';
                 proxyToggle.textContent = `Proxy: ${hasProxy ? 'ON' : 'OFF'}`;
                 
-                appendLocalLog(`Proxy: ${hasProxy ? '/_proxy' : 'OFF'}`);
+                window.appendLocalLog(`Proxy: ${hasProxy ? '/_proxy' : 'OFF'}`);
                 
                 playground.triggerCustomMode();
                 playground.saveState();
                 sandbox.setNetworkRules(rules);
             } catch (e) {
-                appendLocalLog('Invalid JSON in rules editor.');
+                window.appendLocalLog('Invalid JSON in rules editor.');
             }
         }
 
         window.clearLogs = () => {
              document.getElementById('logs').innerHTML = '';
-            //  appendLog({ type: 'LOG', depth: 'host', args: ['Logs cleared.'] });
         }
 
         window.resetSandbox = async () => {
-             appendLocalLog('Resetting sandbox...');
-             const regs = await navigator.serviceWorker.getRegistrations();
-             for (let reg of regs) await reg.unregister();
+             window.appendLocalLog('Resetting sandbox...');
+             // Clear host-side state
              localStorage.removeItem('safeSandbox_customState');
-             window.location.reload(true);
+             // Request sandbox to unregister its SW (runs on sandbox origin)
+             const sandboxOrigin = sandbox.getAttribute('sandbox-origin') || 'http://sandbox.localhost:3333';
+             sandbox.shadowRoot.querySelector('iframe').contentWindow.postMessage({ type: 'RESET' }, sandboxOrigin);
         }
-
+        
+        // Listen for reset completion from sandbox
+        window.addEventListener('message', (event) => {
+            if (event.data?.type === 'RESET_COMPLETE') {
+                window.location.reload(true);
+            }
+        });
     </script>
 </body>
 </html>

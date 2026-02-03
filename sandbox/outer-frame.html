@@ -49,7 +49,7 @@
 
         // 1. Service Worker registration
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/outer-sw.js', { scope: '/' })
+            navigator.serviceWorker.register('/outer-sw.js', { scope: '/', updateViaCache: 'none' })
                 .then(reg => {
                     const checkState = () => {
                         if (reg.active) {
@@ -90,6 +90,13 @@
                 if (navigator.serviceWorker.controller) {
                     navigator.serviceWorker.controller.postMessage(data);
                 }
+            } else if (data.type === 'RESET') {
+                // Unregister SW from sandbox origin, then signal host to reload
+                navigator.serviceWorker.getRegistrations().then(regs => {
+                    Promise.all(regs.map(r => r.unregister())).then(() => {
+                        window.parent.postMessage({ type: 'RESET_COMPLETE' }, HOST_ORIGIN);
+                    });
+                });
             }
         });
 

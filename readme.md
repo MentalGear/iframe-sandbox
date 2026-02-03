@@ -137,11 +137,21 @@ PORT=3333 HOST=localhost bun server.ts
 3. **CSP Hardening**: Strict policies per origin
 
 ## Future Work
+- is the sandbox server safe from request of other origins? eg can other origins/website use our sandbox subdomain for their own CSP or does it block all request from other sources ?
 - [ ] **WebSocket Support**: Intercept and filter WS connections
+> WebSocket (ws:, wss:) falls under connect-src in CSP. Looking at the current sandbox CSP in server.ts
+connect-src *
+It already allows all connections, including WebSockets. The SW firewall is what gates WebSocket connections - the SW intercepts fetch requests but cannot intercept WebSocket connections directly.
+Important caveat: Service Workers cannot intercept WebSocket handshakes. So if you allow a domain in the SW's allow list, and the CSP permits it (connect-src *), WebSocket connections to that domain will go through without SW control.
 
+
+- new JS REALMS API: browser support. to run without iframe
+- [] MessageChannel: allow only passing primitives and callables. This prevents "prototype pollution" attacks from leaking out by preventing all complex objects from passing the messageChannel
 - [ ] **MessageChannel IPC**: Replace postMessage wildcards with secure port transfer
 - [ ] **Security Audits**: Automated CSP validation on startup
 - [ ] **captureContentDebug**: When enabled, inject telemetry into `loadSrc()` content to capture console.log/error and thrown exceptions from external URLs
+- [] add quickjs sandbox: https://sebastianwessel.github.io/quickjs/use-cases/ai-generated-code.html
+
 
 ## Service Worker Caching
 
@@ -157,6 +167,21 @@ Set via `cacheStrategy` in NetworkRules or URL param `outer-sw.js?strategy=<valu
 > `cache-first` may serve stale content. Use `network-first` (default) for development. And/or clear your page data: Dev Tools > Application > Clear Data.
 
 ## Testing
+
+E2E tests use **Playwright**. Run them using the script defined in `package.json`:
+
+```bash
+# Run all tests (Playwright)
+bun run test
+
+# Or run directly via playwright
+bunx playwright test
+```
+
+> [!NOTE]
+> Do not use `bun test` directly, as it attempts to run tests with the Bun unit test runner, which is incompatible with `@playwright/test` structures.
+
+## Playground
 
 ```bash
 bun server.ts

@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test"
+import { PRESETS } from "../../lib/presets"
 
 /**
  * Helper: Wait for sandbox to be ready and set network rules
@@ -48,11 +49,7 @@ test.describe("JSONPlaceholder Preset", () => {
     test("direct fetch succeeds without proxy", async ({ page }) => {
         await page.goto("/")
 
-        await setupSandbox(page, {
-            allow: ["jsonplaceholder.typicode.com"],
-            proxyUrl: undefined,
-            files: {},
-        })
+        await setupSandbox(page, PRESETS.jsonplaceholder.rules)
 
         await executeAndWaitForLog(
             page,
@@ -73,9 +70,8 @@ test.describe("Google Preset", () => {
         await page.goto("/")
 
         await setupSandbox(page, {
-            allow: ["www.google.com"],
+            ...PRESETS.google.rules,
             proxyUrl: undefined,
-            files: {},
         })
 
         await executeAndWaitForLog(
@@ -93,11 +89,7 @@ test.describe("Google Preset", () => {
     test("fetch succeeds with proxy enabled", async ({ page }) => {
         await page.goto("/")
 
-        await setupSandbox(page, {
-            allow: ["www.google.com"],
-            proxyUrl: "/_proxy",
-            files: {},
-        })
+        await setupSandbox(page, PRESETS.google.rules)
 
         await executeAndWaitForLog(
             page,
@@ -117,11 +109,7 @@ test.describe("Block All Preset", () => {
     test("all external requests return 403", async ({ page }) => {
         await page.goto("/")
 
-        await setupSandbox(page, {
-            allow: [],
-            proxyUrl: undefined,
-            files: {},
-        })
+        await setupSandbox(page, PRESETS.blocked.rules)
 
         await executeAndWaitForLog(
             page,
@@ -140,20 +128,14 @@ test.describe("Virtual Files", () => {
 
         const virtualContent = "Hello from virtual file!"
 
-        await setupSandbox(page, {
-            allow: [],
-            proxyUrl: undefined,
-            files: { "/virtual.txt": virtualContent },
-        })
+        await setupSandbox(page, PRESETS.virtualfiles.rules)
 
         await executeAndWaitForLog(
             page,
-            `fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Content:", t));`,
-            /Virtual.*virtual\.txt/,
+            PRESETS.virtualfiles.code,
+            /Config:.*1.0/,
         )
-
-        // Should see the content logged
-        await expect(page.locator("#logs")).toContainText(virtualContent)
+        await expect(page.locator("#logs")).toContainText(/Data:.*Hello World/)
     })
 })
 
@@ -190,11 +172,7 @@ test.describe("Log Message Schema", () => {
     test("logs show source and area tags", async ({ page }) => {
         await page.goto("/")
 
-        await setupSandbox(page, {
-            allow: ["jsonplaceholder.typicode.com"],
-            proxyUrl: undefined,
-            files: {},
-        })
+        await setupSandbox(page, PRESETS.jsonplaceholder.rules)
 
         await executeAndWaitForLog(
             page,

@@ -123,7 +123,7 @@ const server = {
                             path.startsWith("/sandbox/")
                         ) {
                             responseHeaders["Content-Security-Policy"] =
-                                "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src *;"
+                                "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; connect-src *;"
                         } else {
                             const sandboxOrigin = `http://${SANDBOX_HOST}:${PORT}`
                             responseHeaders["Content-Security-Policy"] =
@@ -157,7 +157,7 @@ const server = {
             if (isSandboxSubdomain || path.startsWith("/sandbox/")) {
                 // Sandbox Security Policy
                 responseHeaders["Content-Security-Policy"] =
-                    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src *;"
+                    "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; connect-src *;"
             } else {
                 // Host Security Policy
                 const sandboxOrigin = `http://${SANDBOX_HOST}:${PORT}`

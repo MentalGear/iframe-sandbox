@@ -186,15 +186,34 @@ self.addEventListener("fetch", (event) => {
                         event.clientId,
                     )
 
-                    const res = await fetch(proxyUrl)
-                    await ipc.send(
-                        "log",
-                        "network",
-                        `${event.request.method} ${event.request.url} -> ${res.status}`,
-                        ipc.serializeNetwork(event.request, res),
-                        event.clientId,
-                    )
-                    return res
+                    try {
+                        const res = await fetch(proxyUrl)
+                        const clonedRes = res.clone()
+                        await ipc.send(
+                            "log",
+                            "network",
+                            `${event.request.method} ${event.request.url} -> ${res.status}`,
+                            ipc.serializeNetwork(event.request, res),
+                            event.clientId,
+                        )
+                        return clonedRes
+                    } catch (err: any) {
+                        const errorDetails = ipc.serializeError(
+                            err,
+                            event.request.url,
+                        )
+                        await ipc.send(
+                            "error",
+                            "network",
+                            `Proxy error: ${errorDetails.message}`,
+                            errorDetails,
+                            event.clientId,
+                        )
+                        return new Response(JSON.stringify(errorDetails), {
+                            status: 502,
+                            headers: { "Content-Type": "application/json" },
+                        })
+                    }
                 }
 
                 await ipc.send(
