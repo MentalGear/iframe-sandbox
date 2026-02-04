@@ -124,23 +124,39 @@ fetch(sourceUrl)
             allow: ["localhost", "picsum.photos", "fastly.picsum.photos"],
             proxyUrl: "/_proxy",
         },
-        code: `// Load local test page from host origin via proxy
+        code: `// Load local test page from host origin
 console.log("Loading local test page...");
 
-// Fetch from host origin (sandbox only serves 3 infrastructure files)
 const hostOrigin = window.location.origin.replace("sandbox.", "");
 const pageUrl = hostOrigin + "/playground/test-assets/test-page.html";
 
 fetch(pageUrl)
   .then(r => r.text())
   .then(html => {
-    console.log("HTML loaded, rendering...");
-    // Inject base tag so relative paths resolve to host origin
-    const baseTag = '<base href="' + hostOrigin + '/playground/test-assets/">';
-    const htmlWithBase = html.replace('<head>', '<head>' + baseTag);
-    document.open();
-    document.write(htmlWithBase);
-    document.close();
+    console.log("HTML loaded, rendering content...");
+    
+    // Instead of document.write (which wipes the log relay script), 
+    // we surgically replace the content while keeping the environment.
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    
+    // Inject base tag for relative assets
+    const base = document.createElement('base');
+    base.href = hostOrigin + "/playground/test-assets/";
+    document.head.appendChild(base);
+    
+    // Replace content
+    document.body.innerHTML = doc.body.innerHTML;
+    
+    // Copy any scripts from the loaded HTML to execute them
+    doc.querySelectorAll('script').forEach(oldScript => {
+        const newScript = document.createElement('script');
+        Array.from(oldScript.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+        newScript.textContent = oldScript.textContent;
+        document.body.appendChild(newScript);
+    });
+    
+    console.log("Content rendered surgically!");
   })
   .catch(err => console.error("Failed:", err));`,
     },

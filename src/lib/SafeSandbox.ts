@@ -86,17 +86,54 @@ class SafeSandbox extends HTMLElement {
     }
 
     /**
-     * Sets network rules for the sandbox Service Worker.
+     * Sets network rules for the sandbox.
+     * - CSP (connect-src) is set via URL params -> server generates CSP header
+     * - Virtual Files are sent via postMessage to Service Worker
      */
     setNetworkRules(rules: NetworkRules): void {
+        const oldRules = this._networkRules
         this._networkRules = rules
-        this._sendNetworkRules()
+
+        // Calculate new source URL
+        const newSrc = this._calculateIframeSrc()
+
+        // Only reload if the URL (and thus the CSP) would change
+        if (this._iframe.src !== newSrc) {
+            this._iframe.src = newSrc
+        } else {
+            // If URL didn't change (e.g. only virtual files changed),
+            // we still need to send the files to the SW if it's already ready
+            this._sendVirtualFiles()
+        }
     }
 
-    private _sendNetworkRules(): void {
+    private _calculateIframeSrc(): string {
+        if (!this._sandboxOrigin) return ""
+
+        const params = new URLSearchParams()
+
+        // Encode allowed domains
+        const allowedDomains = this._networkRules.allow || []
+        if (allowedDomains.length > 0) {
+            params.set("allow", allowedDomains.join(","))
+        }
+
+        // Pass host origin to allow robust messaging back
+        params.set("host", window.location.origin)
+
+        const queryString = params.toString()
+        const allowParam = queryString ? `?${queryString}` : ""
+        return `${this._sandboxOrigin}/outer-frame.html${allowParam}`
+    }
+
+    private _sendVirtualFiles(): void {
         if (!this._iframe.contentWindow) return
+        if (!this._networkRules.files) return
         this._iframe.contentWindow.postMessage(
-            { type: "SET_NETWORK_RULES", rules: this._networkRules },
+            {
+                type: "SET_NETWORK_RULES",
+                rules: { files: this._networkRules.files },
+            },
             this._sandboxOrigin,
         )
     }
@@ -107,7 +144,7 @@ class SafeSandbox extends HTMLElement {
                 "sandbox",
                 "allow-scripts allow-forms allow-popups allow-modals allow-same-origin",
             )
-            this._iframe.src = `${this._sandboxOrigin}/outer-frame.html`
+            this._iframe.src = this._calculateIframeSrc()
         }
     }
 
@@ -120,7 +157,8 @@ class SafeSandbox extends HTMLElement {
 
         if (data === "READY") {
             this.dispatchEvent(new CustomEvent("ready"))
-            this._sendNetworkRules()
+            // Send Virtual Files to SW after iframe is ready
+            this._sendVirtualFiles()
         } else if (data.type === "LOG") {
             this.dispatchEvent(
                 new CustomEvent<LogMessage>("log", { detail: data }),

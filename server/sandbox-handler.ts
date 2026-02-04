@@ -60,6 +60,7 @@ export async function handleSandboxRequest(
     if (isTypeScript) {
         headers["Content-Type"] = "application/javascript"
         headers["Service-Worker-Allowed"] = "/"
+        headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
 
         const result = await Bun.build({
             entrypoints: [filePath],

@@ -76,319 +76,105 @@ const ipc = {
 
 // ============ Service Worker ============
 
-const CACHE_NAME = "sandbox-cache-v12"
-const ASSETS_TO_CACHE = ["/outer-frame.html", "/inner-frame.html"]
+const CACHE_NAME = "sandbox-cache-v15"
+const ASSETS_TO_CACHE: string[] = []
 
-// Helper to check content length against max limit
-async function checkContentLength(
-    response: Response,
-    maxLength: number | undefined,
-    requestUrl: string,
-    clientId: string,
-): Promise<Response | null> {
-    if (!maxLength) return null // No limit set
-
-    const contentLength = response.headers.get("content-length")
-    if (contentLength) {
-        const size = parseInt(contentLength, 10)
-        if (size > maxLength) {
-            const blockMsg = `Blocked: Response too large (${size} bytes > ${maxLength} limit)`
-            await ipc.send(
-                "error",
-                "security",
-                blockMsg,
-                { url: requestUrl, size, maxLength },
-                clientId,
-            )
-            return new Response(JSON.stringify({ error: blockMsg }), {
-                status: 413,
-                headers: { "Content-Type": "application/json" },
-            })
-        }
-    }
-    return null // Size OK or unknown
-}
-
-const params = new URL(self.location.href).searchParams
-const CACHE_STRATEGY = params.get("strategy") || "network-first"
-
-let networkRules: NetworkRules = {
-    allow: [],
-    allowProtocols: ["http", "https"],
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
-    maxContentLength: undefined,
-    proxyUrl: undefined,
-    files: {},
-    cacheStrategy: "network-first",
-}
+// Virtual Files: in-memory filesystem for sandbox
+let virtualFiles: Record<string, string> = {}
+let currentRules: NetworkRules = {}
 
 self.addEventListener("install", (event) => {
     event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE)),
+        caches.open(CACHE_NAME).then((cache) => {
+            return cache.addAll(ASSETS_TO_CACHE)
+        }),
     )
     self.skipWaiting()
 })
 
 self.addEventListener("activate", (event) => {
-    event.waitUntil(self.clients.claim())
+    event.waitUntil(
+        caches.keys().then((keys) => {
+            return Promise.all(
+                keys
+                    .filter((key) => key !== CACHE_NAME)
+                    .map((key) => caches.delete(key)),
+            )
+        }),
+    )
+    self.clients.claim()
 })
 
 self.addEventListener("message", (event) => {
-    if (event.data?.type === "SET_NETWORK_RULES") {
-        networkRules = {
-            allow: event.data.rules?.allow ?? [],
-            allowProtocols: event.data.rules?.allowProtocols ?? [
-                "http",
-                "https",
-            ],
-            allowMethods: event.data.rules?.allowMethods ?? [
-                "GET",
-                "POST",
-                "PUT",
-                "DELETE",
-                "PATCH",
-                "HEAD",
-                "OPTIONS",
-            ],
-            maxContentLength: event.data.rules?.maxContentLength ?? undefined,
-            proxyUrl: event.data.rules?.proxyUrl ?? undefined,
-            files: event.data.rules?.files ?? {},
-            cacheStrategy: event.data.rules?.cacheStrategy ?? "network-first",
+    if (event.data?.type === "UPDATE_FILES") {
+        virtualFiles = event.data.files ?? {}
+    } else if (event.data?.type === "UPDATE_RULES") {
+        currentRules = event.data.rules ?? {}
+        if (currentRules.files) {
+            virtualFiles = currentRules.files
         }
+        ipc.send(
+            "log",
+            "security",
+            `SW: Rules updated (proxy: ${currentRules.proxyUrl || "OFF"})`,
+        )
     }
 })
 
 self.addEventListener("fetch", (event) => {
     const url = new URL(event.request.url)
-    const sameOrigin = url.origin === self.location.origin
+    const ref = event.request.referrer
 
+    // 1. Virtual Files
+    const virtualPath = url.pathname
+    if (virtualFiles[virtualPath]) {
+        event.respondWith(
+            new Response(virtualFiles[virtualPath], {
+                headers: { "Content-Type": "text/plain" },
+            }),
+        )
+        return
+    }
+
+    // 2. Passthrough - CSP (set by server) will block if needed
     event.respondWith(
-        (async () => {
-            // 1. Virtual Files
-            const virtualPath = url.pathname
-            const files = networkRules.files ?? {}
-            if (files[virtualPath]) {
-                await ipc.send(
-                    "log",
-                    "network",
-                    `Virtual: ${virtualPath} -> 200`,
-                    {},
-                    event.clientId,
-                )
-                return new Response(files[virtualPath], {
-                    headers: { "Content-Type": "text/plain" },
-                })
-            }
+        fetch(event.request)
+            .then(async (response) => {
+                // Log successful fetch for telemetry (only for external/proxied requests)
+                const isInfra =
+                    url.pathname === "/outer-frame.html" ||
+                    url.pathname === "/inner-frame.html" ||
+                    url.pathname === "/outer-sw.js" ||
+                    url.pathname === "/index.html" ||
+                    url.pathname === "/"
 
-            // 2. Same-Origin (Cache)
-            if (sameOrigin) {
-                const strategy = networkRules.cacheStrategy ?? "network-first"
-                if (strategy === "cache-first") {
-                    const cached = await caches.match(event.request)
-                    return cached || fetch(event.request)
-                } else if (strategy === "network-only") {
-                    return fetch(event.request)
-                } else {
-                    try {
-                        const response = await fetch(event.request)
-                        const cache = await caches.open(CACHE_NAME)
-                        cache.put(event.request, response.clone())
-                        return response
-                    } catch (e) {
-                        const cached = await caches.match(event.request)
-                        if (cached) return cached
-                        throw e
-                    }
-                }
-            }
-
-            // 3. Protocol Check
-            const protocol = url.protocol.replace(":", "") as "http" | "https"
-            const allowedProtocols = networkRules.allowProtocols ?? [
-                "http",
-                "https",
-            ]
-            if (!allowedProtocols.includes(protocol)) {
-                const blockMsg = `Blocked: ${protocol}:// not allowed (only ${allowedProtocols.join(", ")})`
-                await ipc.send(
-                    "error",
-                    "security",
-                    blockMsg,
-                    { url: event.request.url },
-                    event.clientId,
-                )
-                return new Response(JSON.stringify({ error: blockMsg }), {
-                    status: 403,
-                    headers: { "Content-Type": "application/json" },
-                })
-            }
-
-            // 4. Method Check
-            const method = event.request.method
-            const allowedMethods = networkRules.allowMethods ?? [
-                "GET",
-                "POST",
-                "PUT",
-                "DELETE",
-                "PATCH",
-                "HEAD",
-                "OPTIONS",
-            ]
-            if (!allowedMethods.includes(method)) {
-                const blockMsg = `Blocked: ${method} not allowed (only ${allowedMethods.join(", ")})`
-                await ipc.send(
-                    "error",
-                    "security",
-                    blockMsg,
-                    { url: event.request.url },
-                    event.clientId,
-                )
-                return new Response(JSON.stringify({ error: blockMsg }), {
-                    status: 403,
-                    headers: { "Content-Type": "application/json" },
-                })
-            }
-
-            // 5. Allowed Domains
-            const allowList = networkRules.allow ?? []
-            const isAllowed = allowList.some((domain) =>
-                url.hostname.endsWith(domain),
-            )
-
-            if (isAllowed) {
-                if (networkRules.proxyUrl) {
-                    // Build proxy URL - support relative and absolute paths
-                    let proxyBase = networkRules.proxyUrl
-                    if (proxyBase.startsWith("/")) {
-                        // Relative path - prepend host origin
-                        const hostOrigin = self.location.origin.replace(
-                            "sandbox.",
-                            "",
-                        )
-                        proxyBase = hostOrigin + proxyBase
-                    }
-                    const proxyUrl = `${proxyBase}?url=${encodeURIComponent(event.request.url)}`
-
+                if (!isInfra || url.searchParams.has("url")) {
                     await ipc.send(
                         "log",
                         "network",
-                        `Proxy: ${event.request.url}`,
-                        {},
-                        event.clientId,
+                        `Fetch: ${event.request.method} ${url.href} -> ${response.status}`,
+                        {
+                            url: url.href,
+                            method: event.request.method,
+                            status: response.status,
+                        },
                     )
-
-                    try {
-                        const res = await fetch(proxyUrl)
-
-                        // Check content length limit
-                        const sizeBlock = await checkContentLength(
-                            res,
-                            networkRules.maxContentLength,
-                            event.request.url,
-                            event.clientId,
-                        )
-                        if (sizeBlock) return sizeBlock
-
-                        const clonedRes = res.clone()
-                        await ipc.send(
-                            "log",
-                            "network",
-                            `${event.request.method} ${event.request.url} -> ${res.status}`,
-                            ipc.serializeNetwork(event.request, res),
-                            event.clientId,
-                        )
-                        return clonedRes
-                    } catch (err: any) {
-                        const errorDetails = ipc.serializeError(
-                            err,
-                            event.request.url,
-                        )
-                        await ipc.send(
-                            "error",
-                            "network",
-                            `Proxy error: ${errorDetails.message}`,
-                            errorDetails,
-                            event.clientId,
-                        )
-                        return new Response(JSON.stringify(errorDetails), {
-                            status: 502,
-                            headers: { "Content-Type": "application/json" },
-                        })
-                    }
                 }
-
+                return response
+            })
+            .catch(async (err) => {
+                // Log failed fetch (could be CSP block or network error)
                 await ipc.send(
-                    "log",
+                    "error",
                     "network",
-                    `Fetch: ${event.request.url}`,
-                    {},
-                    event.clientId,
+                    `Fetch Error: ${event.request.method} ${url.href} - ${err.message}`,
+                    {
+                        url: url.href,
+                        method: event.request.method,
+                        error: err.message,
+                    },
                 )
-
-                try {
-                    const res = await fetch(event.request)
-
-                    // Check content length limit
-                    const sizeBlock = await checkContentLength(
-                        res,
-                        networkRules.maxContentLength,
-                        event.request.url,
-                        event.clientId,
-                    )
-                    if (sizeBlock) return sizeBlock
-
-                    await ipc.send(
-                        "log",
-                        "network",
-                        `${event.request.method} ${event.request.url} -> ${res.status}`,
-                        ipc.serializeNetwork(event.request, res),
-                        event.clientId,
-                    )
-                    return res
-                } catch (err: any) {
-                    const errorDetails = ipc.serializeError(
-                        err,
-                        event.request.url,
-                    )
-                    let message = errorDetails.message as string
-
-                    if (!networkRules.proxyUrl) {
-                        message +=
-                            " (Try adding a proxyUrl and ensure that server route handle/changes the CORS headers accordingly.)"
-                    }
-
-                    await ipc.send(
-                        "error",
-                        "network",
-                        message,
-                        errorDetails,
-                        event.clientId,
-                    )
-
-                    return new Response(JSON.stringify(errorDetails), {
-                        status: 502,
-                        headers: { "Content-Type": "application/json" },
-                    })
-                }
-            }
-
-            // 4. Blocked
-            const blockMsg = `Blocked: ${event.request.url}`
-            await ipc.send(
-                "error",
-                "security",
-                blockMsg,
-                { url: event.request.url },
-                event.clientId,
-            )
-
-            return new Response(
-                JSON.stringify({ error: blockMsg, url: event.request.url }),
-                {
-                    status: 403,
-                    headers: { "Content-Type": "application/json" },
-                },
-            )
-        })(),
+                throw err
+            }),
     )
 })

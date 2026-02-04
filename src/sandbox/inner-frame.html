@@ -55,6 +55,19 @@
             };
         }
 
+        // 1. CSP Violation Reporting (Restores logging lost from SW)
+        document.addEventListener('securitypolicyviolation', (event) => {
+            const blockedUri = event.blockedURI;
+            const violatedDirective = event.violatedDirective;
+            window.parent.postMessage(
+                createLogMessage('error', 
+                    `Security Violation: ${violatedDirective} blocked ${blockedUri}`, 
+                    { blockedUri, violatedDirective, sourceFile: event.sourceFile, lineNumber: event.lineNumber }
+                ),
+                "*"
+            );
+        });
+
         // Proxy console methods
         ['log', 'error', 'warn'].forEach(level => {
             const original = console[level];

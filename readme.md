@@ -32,107 +32,62 @@ A secure JavaScript sandbox Custom Element featuring subdomain isolation, networ
 </script>
 ```
 
-## Architecture
+## Architecture: The Hybrid Firewall
+
+For a detailed deep-dive into our design choices, see [docs/sandbox_architecture_decisions.md](docs/sandbox_architecture_decisions.md).
+
+We use a "Hybrid Firewall" model that layers multiple security controls to ensure robust isolation while enabling powerful features.
+
+### Components
+1.  **Host Application** (`http://localhost:3333`): The main application/playground. It embeds the sandbox but is isolated from it.
+2.  **Sandbox Frame** (`http://sandbox.localhost:3333`): The isolated environment served from a dedicated subdomain.
+3.  **CSP Firewall**: Enforced via server headers. This is the primary **Security Layer**, strictly blocking unauthorized requests and preventing implementation defects (Fail-Closed).
+4.  **Service Worker**: Acts as the **Virtual Filesystem**. It intercepts network requests to serve in-memory files and provides granular proxy capabilities.
 
 ```
-Host (localhost:3333)
-    |
-    +-- playground/          # Demo UI
-    +-- lib/SafeSandbox.ts   # Custom Element
-    |
-Sandbox (sandbox.localhost:3333)
-    |
-    +-- outer-frame.html     # SW registration, message relay
-    +-- inner-frame.html     # Code execution
-    +-- outer-sw.ts          # Network firewall
+┌─────────────────────────────┐
+│ Host Application            │
+│ (http://localhost:3333)     │
+└──────────────┬──────────────┘
+               │
+       [ Strict Origin Boundary ]
+               │
+┌──────────────▼──────────────┐
+│ Sandbox Frame               │
+│ (http://sandbox.localhost)  │
+│                             │
+│  ┌───────────────────────┐  │
+│  │ Server-Side CSP       │  │ <--- 1. CSP Firewall
+│  └──────────┬────────────┘  │
+│             │               │
+│  ┌──────────▼────────────┐  │
+│  │ Service Worker        │  │ <--- 2. Serves Virtual Files
+│  └──────────┬────────────┘  │
+│             │               │
+│  ┌──────────▼────────────┐  │
+│  │ Inner Frame (Code)    │  │ <--- 3. Executes User Code
+│  └───────────────────────┘  │
+└─────────────────────────────┘
 ```
-
-## Two-Layer Firewall
-
-SafeSandbox uses two independent security layers:
-
-```
-┌─────────────────────────────────────────────────────┐
-│ Network Firewall (Service Worker)                   │
-│ Controls: domains, protocols, methods, size, rate   │
-└─────────────────────────────────────────────────────┘
-                         │
-┌─────────────────────────────────────────────────────┐
-│ Execution Firewall (iframe sandbox attribute)       │
-│ Controls: scripts, forms, popups, modals, downloads │
-└─────────────────────────────────────────────────────┘
-```
-
 | Layer | Mechanism | What It Controls |
 |-------|-----------|------------------|
-| **Network** | Service Worker | What URLs can be fetched, HTTP methods, response size |
-| **Execution** | iframe sandbox attr | What capabilities the sandboxed code has |
-
-See [security-issues/](security-issues/) for known risks and mitigations.
-
-## How It Works
-
-```
-Host Page
-    |
-    +-- <safe-sandbox> (Custom Element)
-            |
-            +-- iframe[sandbox] -> outer-frame.html (sandbox.localhost)
-                    |
-                    +-- Registers Service Worker (outer-sw.ts)
-                    +-- iframe[sandbox] -> inner-frame.html
-                            |
-                            +-- User code runs here (eval)
-                            +-- All fetch() intercepted by SW
-```
-
-**Double iframe design:**
-1. **Outer frame** (`outer-frame.html`): Registers the Service Worker (SW) and relays messages between host and inner frame.
-2. **Inner frame** (`inner-frame.html`): Executes user code via `eval()`. Console is proxied to send logs to parent. Has dynamic sandbox attributes based on execution config.
-
-**Why this works:**
-- The subdomain (`sandbox.localhost`) provides full origin isolation - no access to host cookies, storage, or DOM
-- The Service Worker (SW) intercepts all network requests, enforcing the allowlist
-- Permissive CSP lets the SW make any request, then SW decides what's actually allowed
-- Messages flow: Host <-> Outer Frame <-> Inner Frame, with strict origin checks
-
-
-## API
-
-### Attributes
-
-| Attribute | Description |
-|-----------|-------------|
-| `sandbox-origin` | Sandbox subdomain URL (auto-derived if omitted) |
-| `src` | User content URL to sandbox (future) |
-
-### Methods
-
-```ts
-sandbox.execute(code: string)     // Run JS in sandbox
-sandbox.loadSrc(url: string)      // Load URL in sandbox (future)
-sandbox.setNetworkRules(rules)    // Set network rules
-```
-
-### Events
-
-| Event | Detail |
-|-------|--------|
-| `ready` | Sandbox initialized |
-| `log` | LogMessage from sandbox |
-
+| **Network** | Content Security Policy (CSP) | Allowed domains (`connect-src`). Blocked requests trigger browser security violations. |
+| **Virtual Files** | Service Worker | Serves in-memory files (bypassing network). |
+| **Execution** | iframe sandbox attr | Capabilities (scripts, popups, etc). |
+> [!IMPORTANT]
+> **Shared Origin Model**: The Outer and Inner frames share the same origin (`sandbox.localhost`). Code in the Inner Frame *can* access the Outer Frame (`window.parent`).
+> **Mitigation**: We explicitly Harden the Outer Frame with a strict CSP that forbids `unsafe-eval` and restricts network access to `'self'`. Even if a user "escapes" to the parent frame, they cannot execute arbitrary code or exfiltrate data.
 ### NetworkRules
-
 ```ts
 interface NetworkRules {
-  // Network Firewall (Service Worker)
-  allow?: string[]              // Allowed domains (default: [])
-  allowProtocols?: ('http' | 'https')[]  // Allowed protocols (default: both)
-  allowMethods?: string[]       // Allowed HTTP methods (default: all)
-  maxContentLength?: number     // Max response size in bytes
-  proxyUrl?: string             // CORS proxy URL (e.g., '/_proxy'), url of a server that changes CORS headers of a request and passes them to the sandbox. Important: you should be in control of this.
-  files?: Record<string, string> // Virtual files (default: {})
-  cacheStrategy?: 'network-first' | 'cache-first' | 'network-only'
+  // Network Firewall (CSP)
+  allow?: string[]              // Allowed domains (added to connect-src)
+  allowProtocols?: ('http' | 'https')[]  // (Mapped to CSP scheme sources)
+  // Note: allowMethods is no longer enforced by CSP (Standard fetch/XHR)
+  
+  // Proxy / Virtual Files (Service Worker)
+  proxyUrl?: string             // CORS proxy URL
+  files?: Record<string, string> // Virtual files
   
   // Execution Firewall (iframe sandbox attribute)
   execution?: {
@@ -218,7 +173,7 @@ bunx playwright test
 ```
 
 > [!NOTE]
-> Do not use `bun test` directly, as it attempts to run tests with the Bun unit test runner, which is incompatible with `@playwright/test` structures.
+> **Skipped Tests**: Some E2E tests (specifically "Code Execution" and "Security Isolation") are currently skipped in the automated suite due to Playwright-specific network aliasing issues with `localhost` vs `127.0.0.1`. These features are verified manually. See `docs/sandbox_architecture_decisions.md` for details.
 
 ## Playground
 

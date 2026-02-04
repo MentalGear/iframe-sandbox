@@ -10,7 +10,7 @@
     </style>
 </head>
 <body>
-    <iframe id="inner" sandbox="allow-scripts allow-same-origin" src="inner-frame.html"></iframe>
+    <iframe id="inner" sandbox="allow-scripts allow-same-origin"></iframe>
 
     <script>
         /**
@@ -21,9 +21,15 @@
             'use strict';
             
             const innerFrame = document.getElementById('inner');
-            const HOST_ORIGIN = window.location.origin.replace('sandbox.', '');
+            const params = new URLSearchParams(window.location.search);
+            // 1. Prefer explicit Host Origin passed from parent
+            // 2. Fallback: Deduce from current origin (assumes sandbox.domain structure)
+            const HOST_ORIGIN = params.get('host') || window.location.origin.replace('sandbox.', '');
+            
+            // Load inner frame with same query params (for CSP propagation)
+            innerFrame.src = 'inner-frame.html' + window.location.search;
 
-            // Send status updates to host (for playground display)
+            // Send status updates to host
             function sendStatus(status, level = 'log') {
                 window.parent.postMessage({
                     type: 'LOG',
@@ -35,28 +41,59 @@
                 }, HOST_ORIGIN);
             }
 
+
+
+            window.pendingRules = null;
+
+            function syncRulesWithSW(rules) {
+                if (!rules) return;
+                navigator.serviceWorker.ready.then(registration => {
+                    const worker = registration.active;
+                    if (worker) {
+                        worker.postMessage({
+                            type: 'UPDATE_RULES',
+                            rules: rules
+                        });
+                        sendStatus('SW: rules synced');
+                    }
+                });
+            }
+
             // 1. Service Worker registration
             if ('serviceWorker' in navigator) {
                 sendStatus('SW: registering...');
                 
-                navigator.serviceWorker.register('/outer-sw.js', { scope: '/', updateViaCache: 'none' })
+                navigator.serviceWorker.register('/outer-sw.js', { 
+                    scope: '/', 
+                    updateViaCache: 'none',
+                    type: 'module' 
+                })
                     .then(reg => {
+                        sendStatus('SW: registered');
+                        
                         const checkState = () => {
                             if (reg.active) {
                                 sendStatus('SW: active');
                                 window.parent.postMessage('READY', HOST_ORIGIN);
                             } else {
-                                setTimeout(checkState, 200);
+                                setTimeout(checkState, 100);
                             }
                         };
                         checkState();
                     })
                     .catch(err => {
-                        sendStatus('SW: registration failed - ' + err.message, 'error');
-                        console.error("SW registration failed:", err);
+                        sendStatus('SW: error: ' + err.message);
                     });
+
+                // When the service worker takes control, sync the current rules
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    sendStatus('SW: controller changed, syncing rules...');
+                    if (window.pendingRules) {
+                        syncRulesWithSW(window.pendingRules);
+                    }
+                });
                 
-                // Listen for messages from SW (network/security events)
+                // Listen for messages from SW (Virtual File events only now)
                 navigator.serviceWorker.addEventListener('message', (event) => {
                     if (event.data?.type === 'LOG') {
                         window.parent.postMessage(event.data, HOST_ORIGIN);
@@ -66,51 +103,71 @@
                 sendStatus('SW: not supported', 'error');
             }
 
-            // 2. Messages from Host -> forward to inner frame or SW
+            // 2. Message Handler - Unified relay and trace
+            let innerFrameReady = false;
+            let executionQueue = [];
+
             window.addEventListener('message', (event) => {
-                if (event.origin !== HOST_ORIGIN) return;
-                
                 const data = event.data;
                 if (!data) return;
 
-                if (data.type === 'EXECUTE') {
-                    innerFrame.contentWindow.postMessage(data, "*");
-                } else if (data.type === 'SET_NETWORK_RULES') {
-                    if (navigator.serviceWorker.controller) {
-                        navigator.serviceWorker.controller.postMessage(data);
-                    }
-                    // Handle execution policy (inline to prevent external access)
-                    if (data.rules?.execution) {
-                        const execution = data.rules.execution;
-                        const attrs = ['allow-same-origin'];
-                        if (execution.scripts !== false) attrs.push('allow-scripts');
-                        if (execution.formSending !== false) attrs.push('allow-forms');
-                        if (execution.popups === true) attrs.push('allow-popups');
-                        if (execution.modals !== false) attrs.push('allow-modals');
-                        if (execution.downloads === true) attrs.push('allow-downloads');
-                        const newSandbox = attrs.join(' ');
-                        if (innerFrame.sandbox !== newSandbox) {
-                            innerFrame.sandbox = newSandbox;
-                            sendStatus('Sandbox attributes: ' + newSandbox);
+                const isHost = (event.source === window.parent);
+                const isInner = (event.source === innerFrame.contentWindow);
+                const originMatch = (event.origin === HOST_ORIGIN);
+
+                // A. Messages from Host
+                if (isHost || (originMatch && event.source !== innerFrame.contentWindow)) {
+                    if (data.type === 'EXECUTE') {
+                        if (innerFrameReady && innerFrame.contentWindow) {
+                            innerFrame.contentWindow.postMessage(data, "*");
+                        } else {
+                            executionQueue.push(data);
                         }
-                    }
-                } else if (data.type === 'RESET') {
-                    navigator.serviceWorker.getRegistrations().then(regs => {
-                        Promise.all(regs.map(r => r.unregister())).then(() => {
-                            window.parent.postMessage({ type: 'RESET_COMPLETE' }, HOST_ORIGIN);
+                    } else if (data.type === 'SET_NETWORK_RULES') {
+                        window.pendingRules = data.rules;
+                        syncRulesWithSW(data.rules);
+                    } else if (data.type === 'RESET') {
+                        navigator.serviceWorker.getRegistrations().then(regs => {
+                            Promise.all(regs.map(r => r.unregister())).then(() => {
+                                window.parent.postMessage({ type: 'RESET_COMPLETE' }, HOST_ORIGIN);
+                            });
                         });
-                    });
+                    }
+                    return;
+                }
+
+                // B. Messages from Inner Frame
+                if (isInner) {
+                    if (data === 'READY') {
+                        innerFrameReady = true;
+                        
+                        if (executionQueue.length > 0) {
+                            while (executionQueue.length > 0) {
+                                const qData = executionQueue.shift();
+                                innerFrame.contentWindow.postMessage(qData, "*");
+                            }
+                        }
+                        
+                        // Signal to host
+                        window.parent.postMessage('READY', HOST_ORIGIN);
+                    } else if (data.type === 'LOG') {
+                        // Relay inner logs to host
+                        window.parent.postMessage(data, HOST_ORIGIN);
+                    }
+                    return;
                 }
             });
 
-            // 3. Messages from Inner Frame -> forward to Host
-            window.addEventListener('message', (event) => {
-                if (event.source === innerFrame.contentWindow) {
-                    if (event.data?.type === 'LOG' || event.data === 'READY') {
-                        window.parent.postMessage(event.data, HOST_ORIGIN);
+            // 3. Service Worker Message Listener
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    const data = event.data;
+                    if (data?.type === 'LOG') {
+                        // Log relay from SW
+                        window.parent.postMessage(data, HOST_ORIGIN);
                     }
-                }
-            });
+                });
+            }
         })();
     </script>
 </body>
