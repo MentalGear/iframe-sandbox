@@ -1,69 +1,70 @@
 import { serve } from "bun"
-import { join } from "path"
+import { handleSandboxRequest } from "./server/sandbox-handler"
+import { handleHostRequest } from "./server/host-handler"
+import { handleProxyRequest } from "./server/proxy-handler"
+import { generateCSP } from "./server/csp-firewall"
 
-const PORT = 3333
+/**
+ * SafeSandbox Development Server
+ * Routes requests to appropriate handlers based on subdomain.
+ */
+
+const PORT = parseInt(process.env.PORT || "3333", 10)
+const HOST = process.env.HOST || "localhost"
+const SANDBOX_HOST = `sandbox.${HOST}`
 
 console.log(`Server running at:`)
-console.log(`- Host:    http://localhost:${PORT}`)
-console.log(`- Sandbox: http://127.0.0.1:${PORT}`) // Same server, distinct origin
+console.log(`- Host:    http://${HOST}:${PORT}`)
+console.log(`- Sandbox: http://${SANDBOX_HOST}:${PORT}`)
 
 serve({
     port: PORT,
-    async fetch(req) {
+    async fetch(req: Request): Promise<Response> {
         const url = new URL(req.url)
-        let path = url.pathname
+        const hostHeader = req.headers.get("host") || ""
+        const isSandboxSubdomain = hostHeader.startsWith("sandbox.")
 
-        // Router
-        if (path === "/" || path === "/index.html") {
-            // If accessed via localhost, serve client (Host)
-            // If accessed via 127.0.0.1, serve sandbox (for direct testing, though usually accessed via iframe)
-            // Actually, to keep it simple, let's explicitely route:
-            // localhost:3333/ -> client/index.html
-            // But the sandbox iframe is loaded via 127.0.0.1:3333/sandbox/index.html
-            path = "/client/index.html"
-        }
+        // Route to appropriate handler
+        if (isSandboxSubdomain) {
+            // [DYNAMIC CSP] Serve sandbox context with CSP based on ?allow= query param
+            if (
+                url.pathname === "/outer-frame.html" ||
+                url.pathname === "/inner-frame.html" ||
+                url.pathname === "/" ||
+                url.pathname === "/index.html"
+            ) {
+                const filePath =
+                    url.pathname === "/inner-frame.html"
+                        ? "./src/sandbox/inner-frame.html"
+                        : "./src/sandbox/outer-frame.html"
+                const file = Bun.file(filePath)
 
-        // Serve static files
-        // Security: Only allow serving from client/ and sandbox/ folders to prevent directory traversal
-        let filePath
-        if (path.startsWith("/client/")) {
-            filePath = join(process.cwd(), path)
-        } else if (path.startsWith("/sandbox/")) {
-            filePath = join(process.cwd(), path)
-        } else {
-            return new Response("Not Found", { status: 404 })
-        }
+                // Parse allowed domains from query string
+                const allowParam = url.searchParams.get("allow") || ""
+                const scriptUnsafe = url.searchParams.has("unsafe")
 
-        const file = Bun.file(filePath)
-        if (await file.exists()) {
-            const headers = new Headers()
-            headers.set("Content-Type", file.type)
-            headers.set(
-                "Cache-Control",
-                "no-store, no-cache, must-revalidate, proxy-revalidate",
-            )
-            headers.set("Pragma", "no-cache")
-            headers.set("Expires", "0")
+                // Generate CSP using the dedicated firewall module
+                const csp = generateCSP(allowParam, PORT, scriptUnsafe)
 
-            // Security: Add CSP
-            if (path.startsWith("/sandbox/")) {
-                // Sandbox needs scripts and same-origin to allow Service Worker
-                headers.set(
-                    "Content-Security-Policy",
-                    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';",
-                )
-            } else {
-                // Host CSP: Allows loading iframe from 127.0.0.1
-                headers.set(
-                    "Content-Security-Policy",
-                    "default-src 'self' http://127.0.0.1:3333; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-src http://127.0.0.1:3333;",
-                )
+                return new Response(file, {
+                    headers: {
+                        "Content-Type": "text/html",
+                        "Content-Security-Policy": csp,
+                        "Cache-Control": "no-store", // Prevent browser from caching old CSP
+                    },
+                })
             }
-
-            return new Response(file, { headers })
+            return handleSandboxRequest(req, url)
+        } else {
+            return handleHostRequest(req, url)
         }
 
-        console.log(`404: ${path}`)
-        return new Response("Not Found", { status: 404 })
+        // CORS Proxy (available on both origins)
+        // NOT SUPPORTED ATM, we only serve local websites
+        // higher complexity and tests are currently not passing
+        // DO NOT REMOVE COMMENT
+        // if (url.pathname === "/_proxy") {
+        //     return handleProxyRequest(req, url)
+        // }
     },
 })

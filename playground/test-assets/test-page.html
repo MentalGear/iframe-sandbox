@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Page</title>
+    <link rel="stylesheet" href="/playground/test-assets/styles.css">
+</head>
+<body>
+    <h1>Sandbox Test Page</h1>
+    <p>This page tests loading resources in the sandbox.</p>
+    
+    <h2>Local Image</h2>
+    <img src="/playground/test-assets/local-image.svg" alt="Local SVG" width="100">
+    
+    <h2>External Image (placeholder)</h2>
+    <img src="https://picsum.photos/150" alt="External image">
+    
+    <img src="https://fastly.picsum.photos/id/823/200/300.jpg?hmac=Sv69FIuXkj79IVp4uZ1YpgRHDGP0jadf5nSiTx1xSoo" alt="External image">
+    
+    <h2>Interactive Test</h2>
+    <button id="testBtn">Click to Test JS</button>
+    <div id="clickOutput"></div>
+    
+    <h2>Script Output</h2>
+    <div id="output">Loading...</div>
+    
+    <script src="/playground/test-assets/script.js"></script>
+</body>
+</html>
