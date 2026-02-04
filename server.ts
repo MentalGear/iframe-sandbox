@@ -41,9 +41,10 @@ serve({
 
                 // Parse allowed domains from query string
                 const allowParam = url.searchParams.get("allow") || ""
+                const scriptUnsafe = url.searchParams.has("unsafe")
 
                 // Generate CSP using the dedicated firewall module
-                const csp = generateCSP(allowParam, PORT)
+                const csp = generateCSP(allowParam, PORT, scriptUnsafe)
 
                 return new Response(file, {
                     headers: {

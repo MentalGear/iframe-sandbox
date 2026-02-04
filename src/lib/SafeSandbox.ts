@@ -11,7 +11,7 @@ class SafeSandbox extends HTMLElement {
     private _sandboxOrigin: string
 
     static get observedAttributes(): string[] {
-        return ["sandbox-origin", "src"]
+        return ["sandbox-origin", "src", "script-unsafe"]
     }
 
     constructor() {
@@ -48,6 +48,8 @@ class SafeSandbox extends HTMLElement {
 
         if (name === "sandbox-origin") {
             this._updateSandboxOrigin()
+            this._updateIframeSource()
+        } else if (name === "script-unsafe") {
             this._updateIframeSource()
         } else if (name === "src") {
             // Future: load user content in sandbox
@@ -94,6 +96,13 @@ class SafeSandbox extends HTMLElement {
         const oldRules = this._networkRules
         this._networkRules = rules
 
+        // Sync attribute with rule
+        if (rules.scriptUnsafe) {
+            this.setAttribute("script-unsafe", "true")
+        } else {
+            this.removeAttribute("script-unsafe")
+        }
+
         // Calculate new source URL
         const newSrc = this._calculateIframeSrc()
 
@@ -120,6 +129,11 @@ class SafeSandbox extends HTMLElement {
 
         // Pass host origin to allow robust messaging back
         params.set("host", window.location.origin)
+
+        // Pass unsafe flag if attribute is present
+        if (this.hasAttribute("script-unsafe")) {
+            params.set("unsafe", "true")
+        }
 
         const queryString = params.toString()
         const allowParam = queryString ? `?${queryString}` : ""

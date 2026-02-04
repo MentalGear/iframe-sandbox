@@ -11,26 +11,30 @@ export const PRESETS: Record<string, Preset> = {
     jsonplaceholder: {
         id: "jsonplaceholder",
         label: "JSONPlaceholder (CORS OK)",
-        rules: { allow: ["jsonplaceholder.typicode.com"] },
+        rules: { allow: ["jsonplaceholder.typicode.com"], scriptUnsafe: true },
         code: `// JSONPlaceholder - CORS-friendly API
 console.log("Fetching from JSONPlaceholder...");
 fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(r => r.json())
   .then(data => console.log("Got:", data));`,
     },
-    google: {
-        id: "google",
-        label: "Google (CORS Proxy)",
-        rules: { allow: ["www.google.com"], proxyUrl: "/_proxy" },
-        code: `// Google - Needs CORS proxy
-console.log("Fetching Google via proxy...");
-fetch("https://www.google.com")
-  .then(r => console.log("Status:", r.status));`,
-    },
+    //     google: {
+    //         id: "google",
+    //         label: "Google (CORS Proxy)",
+    //         rules: {
+    //             allow: ["www.google.com"],
+    //             proxyUrl: "/_proxy",
+    //             scriptUnsafe: true,
+    //         },
+    //         code: `// Google - Needs CORS proxy
+    // console.log("Fetching Google via proxy...");
+    // fetch("https://www.google.com")
+    //   .then(r => console.log("Status:", r.status));`,
+    //     },
     blocked: {
         id: "blocked",
         label: "Block All",
-        rules: { allow: [] },
+        rules: { allow: [], scriptUnsafe: true },
         code: `// All external blocked
 console.log("Attempting blocked request...");
 fetch("https://example.com");`,
@@ -43,6 +47,7 @@ fetch("https://example.com");`,
                 "/config.json": '{"version": "1.0"}',
                 "/data.txt": "Hello World",
             },
+            scriptUnsafe: true,
         },
         code: `// Virtual files demo
 fetch("/config.json").then(r => r.json()).then(d => console.log("Config:", d));
@@ -54,6 +59,7 @@ fetch("/data.txt").then(r => r.text()).then(t => console.log("Data:", t));`,
         rules: {
             allow: ["jsonplaceholder.typicode.com"],
             cacheStrategy: "cache-first",
+            scriptUnsafe: true,
         },
         code: `// Cache-first strategy demo
 console.log("First fetch (network)...");
@@ -66,7 +72,7 @@ setTimeout(() => {
     security: {
         id: "security",
         label: "Security Isolation",
-        rules: {},
+        rules: { scriptUnsafe: true },
         code: `// Security isolation tests
 console.log("Testing isolation...");
 
@@ -91,38 +97,42 @@ if (cookies.includes("sandbox_test")) {
 }
 console.log("Check host devtools - should NOT see 'sandbox_test' cookie");`,
     },
-    htmlContent: {
-        id: "htmlContent",
-        label: "External HTML (MDN)",
-        rules: { allow: ["developer.mozilla.org"], proxyUrl: "/_proxy" },
-        code: `// Load external HTML content via proxy
-const sourceUrl = "https://developer.mozilla.org/";
-console.log("Fetching MDN homepage...");
+    //     htmlContent: {
+    //         id: "htmlContent",
+    //         label: "External HTML (MDN)",
+    //         rules: {
+    //             allow: ["developer.mozilla.org"],
+    //             proxyUrl: "/_proxy",
+    //             scriptUnsafe: true,
+    //         },
+    //         code: `// Load external HTML content via proxy
+    // const sourceUrl = "https://developer.mozilla.org/";
+    // console.log("Fetching MDN homepage...");
 
-fetch(sourceUrl)
-  .then(r => {
-    console.log("Response status:", r.status);
-    return r.text();
-  })
-  .then(html => {
-    console.log("HTML loaded, length:", html.length, "chars");
-    // Inject base tag so relative paths resolve to original domain
-    const baseTag = '<base href="' + sourceUrl + '">';
-    const htmlWithBase = html.replace('<head>', '<head>' + baseTag);
-    // Display the fetched HTML content in the sandbox
-    document.open();
-    document.write(htmlWithBase);
-    document.close();
-    console.log("HTML content rendered with base tag!");
-  })
-  .catch(err => console.error("Fetch failed:", err));`,
-    },
+    // fetch(sourceUrl)
+    //   .then(r => {
+    //     console.log("Response status:", r.status);
+    //     return r.text();
+    //   })
+    //   .then(html => {
+    //     console.log("HTML loaded, length:", html.length, "chars");
+    //     // Inject base tag so relative paths resolve to original domain
+    //     const baseTag = '<base href="' + sourceUrl + '">';
+    //     const htmlWithBase = html.replace('<head>', '<head>' + baseTag);
+    //     // Display the fetched HTML content in the sandbox
+    //     document.open();
+    //     document.write(htmlWithBase);
+    //     document.close();
+    //     console.log("HTML content rendered with base tag!");
+    //   })
+    //   .catch(err => console.error("Fetch failed:", err));`,
+    //     },
     localHtml: {
         id: "localHtml",
         label: "Local HTML Page",
         rules: {
             allow: ["localhost", "picsum.photos", "fastly.picsum.photos"],
-            proxyUrl: "/_proxy",
+            scriptUnsafe: true, // Injects scripts via textContent
         },
         code: `// Load local test page from host origin
 console.log("Loading local test page...");
@@ -163,9 +173,11 @@ fetch(pageUrl)
     originEscape: {
         id: "originEscape",
         label: "Origin Escape Test",
-        rules: {},
+        rules: {
+            scriptUnsafe: true, // Injects script tag for testing
+        },
         code: `// Security test: Verify origin isolation holds even with outer-frame access
-console.log("Testing origin isolation...");
+console.log("Testing isolation...");
 
 // Test 1: Try to access outer-frame (should work - same sandbox origin)
 try {
@@ -205,7 +217,7 @@ console.log("Origin isolation test complete.");`,
     infrastructureTest: {
         id: "infrastructureTest",
         label: "Infrastructure Exposure Test",
-        rules: {},
+        rules: { scriptUnsafe: true },
         code: `// Test: Check that no infrastructure is exposed on window.parent
 console.log("Checking for exposed infrastructure...");
 
@@ -245,7 +257,7 @@ if (exposedItems.length > 0) {
     iframeInjection: {
         id: "iframeInjection",
         label: "Iframe Injection Security Test",
-        rules: {},
+        rules: { scriptUnsafe: true },
         code: `// Test: Try to inject an iframe pointing to an external origin
 // Should be blocked by CSP frame-src 'self'
 console.log("Attempting to inject external iframe...");

@@ -143,6 +143,38 @@ test.describe("Virtual Files", () => {
 })
 
 // ============================================================================
+// Test: CSP Flags (Strict Mode)
+// ============================================================================
+test.describe("CSP Flags", () => {
+    test("eval() is blocked by default", async ({ page }) => {
+        await page.goto("/")
+
+        // Default rules (no scriptUnsafe)
+        await setupSandbox(page, { allow: [] })
+
+        await executeAndWaitForLog(
+            page,
+            `console.log("Should not run");`,
+            // Expect the specific error message the user confirmed
+            /Execution Error:.*EvalError.*unsafe-eval/,
+        )
+    })
+
+    test("eval() is allowed with scriptUnsafe: true", async ({ page }) => {
+        await page.goto("/")
+
+        // Enable scriptUnsafe
+        await setupSandbox(page, { allow: [], scriptUnsafe: true })
+
+        await executeAndWaitForLog(
+            page,
+            `const result = eval("1+1"); console.log("Eval result: " + result);`,
+            /Eval result: 2/,
+        )
+    })
+})
+
+// ============================================================================
 // Test: Code Execution
 // ============================================================================
 // SKIPPED: Works manually, fails in CI due to origin aliasing issues.

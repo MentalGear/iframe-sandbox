@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "server": "bun --watch server.ts",
-    "test": "bunx playwright test"
+    "dev": "bun --watch server.ts",
+    "test:browser": "bunx playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",

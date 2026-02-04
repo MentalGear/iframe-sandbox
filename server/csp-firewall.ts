@@ -3,7 +3,11 @@
  * Generates the Content Security Policy headers for the sandbox.
  */
 
-export function generateCSP(allowParam: string, port: number): string {
+export function generateCSP(
+    allowParam: string,
+    port: number,
+    scriptUnsafe: boolean = false,
+): string {
     // Parse allowed domains from query string
     const allowedDomains = allowParam
         ? allowParam
@@ -39,9 +43,13 @@ export function generateCSP(allowParam: string, port: number): string {
 
     // CSP: Allow eval (for user code), inline images/scripts/styles from allowed domains
     // This is the core "Firewall" that prevents exfiltration to unauthorized domains
+    const scriptDirectives = scriptUnsafe
+        ? `'self' 'unsafe-inline' 'unsafe-eval' ${allowedOrigins}`
+        : `'self' ${allowedOrigins}`
+
     return (
         `default-src 'self'; ` +
-        `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${allowedOrigins}; ` +
+        `script-src ${scriptDirectives}; ` +
         `img-src 'self' data: ${allowedOrigins}; ` +
         `style-src 'self' 'unsafe-inline'; ` +
         `connect-src ${allowedOrigins};`

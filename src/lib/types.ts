@@ -11,6 +11,7 @@ export interface NetworkRules {
     proxyUrl?: string
     files?: Record<string, string>
     cacheStrategy?: "network-first" | "cache-first" | "network-only"
+    scriptUnsafe?: boolean // Allow 'unsafe-inline' and 'unsafe-eval'
 
     // Execution Firewall (iframe sandbox attribute)
     execution?: ExecutionPolicy
