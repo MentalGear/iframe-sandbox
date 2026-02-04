@@ -40,6 +40,15 @@ export async function handleSandboxRequest(
     } else if (path === "/outer-sw.js") {
         filePath = join(SANDBOX_ROOT, "outer-sw.ts")
         isTypeScript = true
+    } else if (path === "/outer-frame.js") {
+        filePath = join(SANDBOX_ROOT, "outer-frame.ts")
+        isTypeScript = true
+    } else if (path === "/inner-frame.js") {
+        filePath = join(SANDBOX_ROOT, "inner-frame.ts")
+        isTypeScript = true
+    } else if (path === "/utils.js") {
+        filePath = join(SANDBOX_ROOT, "utils.ts")
+        isTypeScript = true
     } else {
         // Block everything else
         return new Response("Not Found", { status: 404 })

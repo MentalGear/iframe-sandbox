@@ -57,7 +57,7 @@ We use a "Hybrid Firewall" model that layers multiple security controls to ensur
 │ (http://sandbox.localhost)  │
 │                             │
 │  ┌───────────────────────┐  │
-│  │ Server-Side CSP       │  │ <--- 1. CSP Firewall
+│  │  Server-Side set CSP  │  │ <--- 1. CSP Firewall
 │  └──────────┬────────────┘  │
 │             │               │
 │  ┌──────────▼────────────┐  │
