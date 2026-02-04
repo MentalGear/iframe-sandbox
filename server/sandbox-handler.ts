@@ -9,6 +9,7 @@ const SANDBOX_ROOT = join(process.cwd(), "src/sandbox")
 
 // Permissive CSP - Service Worker is the network security layer
 // CSP only controls execution (inline, eval) which we handle via iframe sandbox attribute
+// frame-src 'self' prevents user code from creating iframes to external origins
 const SANDBOX_CSP =
     "default-src * blob: data:; " +
     "script-src * 'unsafe-inline' 'unsafe-eval' blob:; " +
@@ -16,7 +17,7 @@ const SANDBOX_CSP =
     "img-src * blob: data:; " +
     "font-src * data:; " +
     "connect-src *; " +
-    "frame-src *;"
+    "frame-src 'self';"
 
 export async function handleSandboxRequest(
     req: Request,

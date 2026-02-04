@@ -68,7 +68,7 @@ SafeSandbox uses two independent security layers:
 | **Network** | Service Worker | What URLs can be fetched, HTTP methods, response size |
 | **Execution** | iframe sandbox attr | What capabilities the sandboxed code has |
 
-See [security_issues.md](security_issues.md) for known risks and mitigations.
+See [security-issues/](security-issues/) for known risks and mitigations.
 
 ## How It Works
 
@@ -174,6 +174,7 @@ PORT=3333 HOST=localhost bun server.ts
 3. **CSP Hardening**: Strict policies per origin
 
 ## Future Work
+- postMessage: Do a comphrensive analysis of the whole codebase if we replace this with MessageChannel and the security impact
 - is the sandbox server safe from request of other origins? eg can other origins/website use our sandbox subdomain for their own CSP or does it block all request from other sources ?
 - [ ] **WebSocket Support**: Intercept and filter WS connections
 > WebSocket (ws:, wss:) falls under connect-src in CSP. Looking at the current sandbox CSP in server.ts

@@ -144,4 +144,115 @@ fetch(pageUrl)
   })
   .catch(err => console.error("Failed:", err));`,
     },
+    originEscape: {
+        id: "originEscape",
+        label: "Origin Escape Test",
+        rules: {},
+        code: `// Security test: Verify origin isolation holds even with outer-frame access
+console.log("Testing origin isolation...");
+
+// Test 1: Try to access outer-frame (should work - same sandbox origin)
+try {
+    const outerDoc = window.parent.document;
+    console.log("Outer-frame access: " + (outerDoc ? "YES (expected)" : "NO"));
+} catch (e) {
+    console.error("Outer-frame access: BLOCKED (unexpected) - " + e.message);
+}
+
+// Test 2: Try to access window.top.document (should fail - cross-origin)
+try {
+    const topDoc = window.top.document;
+    const topTitle = topDoc.title;
+    console.error("FAIL: HOST ESCAPE - accessed window.top.document: " + topTitle);
+} catch (e) {
+    console.log("PASS: window.top.document blocked - " + e.name);
+}
+
+// Test 3: Inject script into outer-frame, try to access host from there
+try {
+    const script = window.parent.document.createElement('script');
+    script.textContent = \`
+        try {
+            const hostDoc = window.top.document;
+            console.error("FAIL: HOST ESCAPE from injected script");
+        } catch (e) {
+            console.log("PASS: Injected script blocked from host - " + e.name);
+        }
+    \`;
+    window.parent.document.body.appendChild(script);
+} catch (e) {
+    console.error("Script injection failed: " + e.message);
+}
+
+console.log("Origin isolation test complete.");`,
+    },
+    infrastructureTest: {
+        id: "infrastructureTest",
+        label: "Infrastructure Exposure Test",
+        rules: {},
+        code: `// Test: Check that no infrastructure is exposed on window.parent
+console.log("Checking for exposed infrastructure...");
+
+const exposedItems = [];
+
+// These should NOT be accessible if IIFE isolation is working
+const forbidden = [
+    'updateSandboxAttributes',
+    'sendStatus', 
+    'checkState',
+    'statusEl',
+    'HOST_ORIGIN',
+    'innerFrame'
+];
+
+for (const name of forbidden) {
+    if (typeof window.parent[name] !== 'undefined') {
+        exposedItems.push(name);
+    }
+}
+
+// Also check via window.top[0] path
+try {
+    if (typeof window.top[0]?.updateSandboxAttributes === 'function') {
+        exposedItems.push('window.top[0].updateSandboxAttributes');
+    }
+} catch (e) {
+    // Cross-origin blocked - expected
+}
+
+if (exposedItems.length > 0) {
+    console.error("FAIL: Exposed items: " + exposedItems.join(", "));
+} else {
+    console.log("PASS: No infrastructure exposed on window.parent");
+}`,
+    },
+    iframeInjection: {
+        id: "iframeInjection",
+        label: "Iframe Injection Security Test",
+        rules: {},
+        code: `// Test: Try to inject an iframe pointing to an external origin
+// Should be blocked by CSP frame-src 'self'
+console.log("Attempting to inject external iframe...");
+
+const iframe = document.createElement('iframe');
+iframe.src = 'https://example.com';
+iframe.id = 'injected-iframe';
+document.body.appendChild(iframe);
+
+// Wait and check if we can access content 
+setTimeout(() => {
+    const injected = document.getElementById('injected-iframe');
+    try {
+        const doc = injected.contentDocument;
+        const body = doc?.body?.innerHTML;
+        if (body && body.length > 0) {
+           console.error("FAIL: Could read iframe content (not blocked)");
+        } else {
+           console.log("PASS: Iframe content not accessible (blocked or empty)");
+        }
+    } catch (e) {
+        console.log("PASS: Iframe access blocked - " + e.name);
+    }
+}, 2000);`,
+    },
 }

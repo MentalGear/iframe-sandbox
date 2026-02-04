@@ -309,4 +309,182 @@ test.describe("Security Isolation", () => {
             /FAIL: Host cookie visible/,
         )
     })
+
+    test("cannot escape to host via outer-frame script injection", async ({
+        page,
+    }) => {
+        await page.goto("/")
+
+        await expect(page.locator("#sandbox-status")).toContainText("Ready", {
+            timeout: 10000,
+        })
+
+        await page.click('button:has-text("Clear Logs")')
+        await page.locator("#code").fill(`
+            // Test 1: Try to access outer-frame (should work - same sandbox origin)
+            try {
+                const outerDoc = window.parent.document;
+                console.log("Outer-frame access: " + (outerDoc ? "YES" : "NO"));
+            } catch (e) {
+                console.log("Outer-frame access: BLOCKED - " + e.message);
+            }
+
+            // Test 2: Try to access window.top.document (should fail - cross-origin)
+            try {
+                const topDoc = window.top.document;
+                const topTitle = topDoc.title;
+                console.error("FAIL: HOST ESCAPE - accessed window.top.document: " + topTitle);
+            } catch (e) {
+                console.log("PASS: window.top.document blocked - " + e.name);
+            }
+
+            // Test 3: Inject script into outer-frame, try to access host from there
+            try {
+                const script = window.parent.document.createElement('script');
+                script.textContent = \`
+                    try {
+                        const hostDoc = window.top.document;
+                        window.parent.postMessage({type:'LOG', source:'outer', level:'error', area:'security', 
+                            message:'FAIL: HOST ESCAPE from injected script'}, '*');
+                    } catch (e) {
+                        window.parent.postMessage({type:'LOG', source:'outer', level:'log', area:'security',
+                            message:'PASS: Injected script blocked from host - ' + e.name}, '*');
+                    }
+                \`;
+                window.parent.document.body.appendChild(script);
+            } catch (e) {
+                console.log("Script injection failed: " + e.message);
+            }
+        `)
+        await page.click('button:has-text("Run Code")')
+
+        // Wait for logs
+        await page.waitForTimeout(1000)
+
+        // Verify outer-frame is accessible (same origin)
+        await expect(page.locator("#logs")).toContainText(
+            /Outer-frame access: YES/,
+        )
+
+        // Verify host is NOT accessible
+        await expect(page.locator("#logs")).toContainText(
+            /PASS: window\.top\.document blocked/,
+        )
+
+        // Verify injected script also cannot access host
+        await expect(page.locator("#logs")).toContainText(
+            /PASS: Injected script blocked from host/,
+        )
+
+        // Ensure no escape happened
+        await expect(page.locator("#logs")).not.toContainText(/HOST ESCAPE/)
+    })
+
+    test("no infrastructure functions exposed on window.parent", async ({
+        page,
+    }) => {
+        await page.goto("/")
+
+        await expect(page.locator("#sandbox-status")).toContainText("Ready", {
+            timeout: 10000,
+        })
+
+        await page.click('button:has-text("Clear Logs")')
+        await page.locator("#code").fill(`
+            // Check for exposed infrastructure elements
+            const exposedItems = [];
+            
+            // Check for known critical functions/variables that should NOT be exposed
+            const forbidden = [
+                'updateSandboxAttributes',
+                'sendStatus', 
+                'checkState',
+                'statusEl',
+                'HOST_ORIGIN',
+                'innerFrame'
+            ];
+            
+            for (const name of forbidden) {
+                if (typeof window.parent[name] !== 'undefined') {
+                    exposedItems.push(name);
+                }
+            }
+            
+            // Also check via window.top[0] path
+            try {
+                if (typeof window.top[0]?.updateSandboxAttributes === 'function') {
+                    exposedItems.push('window.top[0].updateSandboxAttributes');
+                }
+            } catch (e) {
+                // Cross-origin blocked - good
+            }
+            
+            if (exposedItems.length > 0) {
+                console.error("FAIL: Exposed items: " + exposedItems.join(", "));
+            } else {
+                console.log("PASS: No infrastructure exposed on window.parent");
+            }
+        `)
+        await page.click('button:has-text("Run Code")')
+
+        await expect(page.locator("#logs")).toContainText(
+            /PASS: No infrastructure exposed/,
+            { timeout: 5000 },
+        )
+
+        await expect(page.locator("#logs")).not.toContainText(
+            /FAIL: Exposed items/,
+        )
+    })
+
+    test("iframe injection to external origin is blocked", async ({ page }) => {
+        await page.goto("/")
+
+        await expect(page.locator("#sandbox-status")).toContainText("Ready", {
+            timeout: 10000,
+        })
+
+        await page.click('button:has-text("Clear Logs")')
+        await page.locator("#code").fill(`
+            // Try to create an iframe pointing to external origin
+            const iframe = document.createElement('iframe');
+            iframe.src = 'https://example.com';
+            iframe.id = 'injected-iframe';
+            document.body.appendChild(iframe);
+            
+            // Wait for iframe to attempt load, then check if we can access it
+            setTimeout(() => {
+                const injected = document.getElementById('injected-iframe');
+                try {
+                    // Try to access the iframe's document
+                    // If CSP blocked it or it's cross-origin, this will throw
+                    const doc = injected.contentDocument;
+                    const body = doc?.body?.innerHTML;
+                    if (body && body.length > 0) {
+                        console.error("FAIL: Could read iframe content");
+                    } else {
+                        console.log("PASS: Iframe content not accessible");
+                    }
+                } catch (e) {
+                    // SecurityError means cross-origin/blocked - this is expected
+                    console.log("PASS: Iframe access blocked - " + e.name);
+                }
+            }, 2000);
+        `)
+        await page.click('button:has-text("Run Code")')
+
+        // Wait for the timeout in the code
+        await page.waitForTimeout(3000)
+
+        // Should see blocked/inaccessible message
+        await expect(page.locator("#logs")).toContainText(
+            /PASS:.*blocked|not accessible/i,
+            { timeout: 5000 },
+        )
+
+        // Should NOT be able to read content
+        await expect(page.locator("#logs")).not.toContainText(
+            /FAIL: Could read iframe content/,
+        )
+    })
 })

@@ -5,131 +5,113 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sandbox Outer Frame</title>
     <style>
-        :root {
-            --bg: #ffffff;
-            --text: #1a1a1a;
-            --border: #e0e0e0;
-        }
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg: #1e1e1e;
-                --text: #e0e0e0;
-                --border: #333333;
-            }
-        }
-        body, html { 
-            margin: 0; padding: 0; height: 100%; overflow: hidden; 
-            background: var(--bg); color: var(--text);
-        }
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
         #inner { width: 100%; height: 100%; border: none; }
-        #status { 
-            position: fixed; bottom: 8px; right: 8px; 
-            background: rgba(0,0,0,0.6); color: white; 
-            padding: 4px 8px; font-size: 11px; 
-            pointer-events: none; border-radius: 4px;
-            font-family: monospace;
-            backdrop-filter: blur(4px);
-            z-index: 100;
-        }
     </style>
 </head>
 <body>
-    <div id="status">SW: loading</div>
     <iframe id="inner" sandbox="allow-scripts allow-same-origin" src="inner-frame.html"></iframe>
 
     <script>
         /**
-         * Outer Frame - SW registration and message relay between host and inner frame.
+         * Outer Frame - SW registration and message relay.
+         * All code wrapped in IIFE to prevent global exposure.
          */
-        const statusEl = document.getElementById('status');
-        const innerFrame = document.getElementById('inner');
-        
-        // Derive host origin from current sandbox origin
-        const HOST_ORIGIN = window.location.origin.replace('sandbox.', '');
-
-        // 1. Service Worker registration
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/outer-sw.js', { scope: '/', updateViaCache: 'none' })
-                .then(reg => {
-                    const checkState = () => {
-                        if (reg.active) {
-                            statusEl.textContent = 'SW: active';
-                            statusEl.style.backgroundColor = '#4caf50';
-                            window.parent.postMessage('READY', HOST_ORIGIN);
-                        } else {
-                            setTimeout(checkState, 200);
-                        }
-                    };
-                    checkState();
-                })
-                .catch(err => {
-                    statusEl.textContent = 'SW: error';
-                    statusEl.style.backgroundColor = '#ff5252';
-                    console.error("SW registration failed:", err);
-                });
+        (function() {
+            'use strict';
             
-            // Listen for messages from SW (network/security events)
-            navigator.serviceWorker.addEventListener('message', (event) => {
-                if (event.data?.type === 'LOG') {
-                    // Forward to host
-                    window.parent.postMessage(event.data, HOST_ORIGIN);
+            const innerFrame = document.getElementById('inner');
+            const HOST_ORIGIN = window.location.origin.replace('sandbox.', '');
+
+            // Send status updates to host (for playground display)
+            function sendStatus(status, level = 'log') {
+                window.parent.postMessage({
+                    type: 'LOG',
+                    source: 'outer',
+                    level: level,
+                    area: 'system',
+                    message: status,
+                    timestamp: Date.now()
+                }, HOST_ORIGIN);
+            }
+
+            // 1. Service Worker registration
+            if ('serviceWorker' in navigator) {
+                sendStatus('SW: registering...');
+                
+                navigator.serviceWorker.register('/outer-sw.js', { scope: '/', updateViaCache: 'none' })
+                    .then(reg => {
+                        const checkState = () => {
+                            if (reg.active) {
+                                sendStatus('SW: active');
+                                window.parent.postMessage('READY', HOST_ORIGIN);
+                            } else {
+                                setTimeout(checkState, 200);
+                            }
+                        };
+                        checkState();
+                    })
+                    .catch(err => {
+                        sendStatus('SW: registration failed - ' + err.message, 'error');
+                        console.error("SW registration failed:", err);
+                    });
+                
+                // Listen for messages from SW (network/security events)
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data?.type === 'LOG') {
+                        window.parent.postMessage(event.data, HOST_ORIGIN);
+                    }
+                });
+            } else {
+                sendStatus('SW: not supported', 'error');
+            }
+
+            // 2. Messages from Host -> forward to inner frame or SW
+            window.addEventListener('message', (event) => {
+                if (event.origin !== HOST_ORIGIN) return;
+                
+                const data = event.data;
+                if (!data) return;
+
+                if (data.type === 'EXECUTE') {
+                    innerFrame.contentWindow.postMessage(data, "*");
+                } else if (data.type === 'SET_NETWORK_RULES') {
+                    if (navigator.serviceWorker.controller) {
+                        navigator.serviceWorker.controller.postMessage(data);
+                    }
+                    // Handle execution policy (inline to prevent external access)
+                    if (data.rules?.execution) {
+                        const execution = data.rules.execution;
+                        const attrs = ['allow-same-origin'];
+                        if (execution.scripts !== false) attrs.push('allow-scripts');
+                        if (execution.formSending !== false) attrs.push('allow-forms');
+                        if (execution.popups === true) attrs.push('allow-popups');
+                        if (execution.modals !== false) attrs.push('allow-modals');
+                        if (execution.downloads === true) attrs.push('allow-downloads');
+                        const newSandbox = attrs.join(' ');
+                        if (innerFrame.sandbox !== newSandbox) {
+                            innerFrame.sandbox = newSandbox;
+                            sendStatus('Sandbox attributes: ' + newSandbox);
+                        }
+                    }
+                } else if (data.type === 'RESET') {
+                    navigator.serviceWorker.getRegistrations().then(regs => {
+                        Promise.all(regs.map(r => r.unregister())).then(() => {
+                            window.parent.postMessage({ type: 'RESET_COMPLETE' }, HOST_ORIGIN);
+                        });
+                    });
                 }
             });
-        }
 
-        // 2. Messages from Host -> forward to inner frame or SW
-        window.addEventListener('message', (event) => {
-            if (event.origin !== HOST_ORIGIN) return;
-            
-            const data = event.data;
-            if (!data) return;
-
-            if (data.type === 'EXECUTE') {
-                innerFrame.contentWindow.postMessage(data, "*");
-            } else if (data.type === 'SET_NETWORK_RULES') {
-                if (navigator.serviceWorker.controller) {
-                    navigator.serviceWorker.controller.postMessage(data);
+            // 3. Messages from Inner Frame -> forward to Host
+            window.addEventListener('message', (event) => {
+                if (event.source === innerFrame.contentWindow) {
+                    if (event.data?.type === 'LOG' || event.data === 'READY') {
+                        window.parent.postMessage(event.data, HOST_ORIGIN);
+                    }
                 }
-                // Also handle execution policy if present
-                if (data.rules?.execution) {
-                    updateSandboxAttributes(data.rules.execution);
-                }
-            } else if (data.type === 'RESET') {
-                // Unregister SW from sandbox origin, then signal host to reload
-                navigator.serviceWorker.getRegistrations().then(regs => {
-                    Promise.all(regs.map(r => r.unregister())).then(() => {
-                        window.parent.postMessage({ type: 'RESET_COMPLETE' }, HOST_ORIGIN);
-                    });
-                });
-            }
-        });
-
-        // Helper to build sandbox attribute from execution policy
-        function updateSandboxAttributes(execution) {
-            const attrs = ['allow-same-origin']; // Always needed for SW
-            
-            if (execution.scripts !== false) attrs.push('allow-scripts');
-            if (execution.formSending !== false) attrs.push('allow-forms');
-            if (execution.popups === true) attrs.push('allow-popups');
-            if (execution.modals !== false) attrs.push('allow-modals');
-            if (execution.downloads === true) attrs.push('allow-downloads');
-            
-            const newSandbox = attrs.join(' ');
-            if (innerFrame.sandbox !== newSandbox) {
-                innerFrame.sandbox = newSandbox;
-                console.log('[outer-frame] Updated sandbox:', newSandbox);
-            }
-        }
-
-        // 3. Messages from Inner Frame -> forward to Host
-        window.addEventListener('message', (event) => {
-            if (event.source === innerFrame.contentWindow) {
-                // Forward log messages to host
-                if (event.data?.type === 'LOG' || event.data === 'READY') {
-                    window.parent.postMessage(event.data, HOST_ORIGIN);
-                }
-            }
-        });
+            });
+        })();
     </script>
 </body>
 </html>
