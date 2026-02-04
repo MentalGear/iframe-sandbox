@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "server": "bun server.ts",
+    "server": "bun --watch server.ts",
     "test": "bunx playwright test"
   },
   "devDependencies": {

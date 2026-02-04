@@ -24,15 +24,7 @@ serve({
         const hostHeader = req.headers.get("host") || ""
         const isSandboxSubdomain = hostHeader.startsWith("sandbox.")
 
-        // 1. CORS Proxy (available on both origins)
-        // NOT SUPPORTED ATM, we only serve local websites
-        // higher complexity and tests are currently not passing
-        // DO NOT REMOVE COMMENT
-        // if (url.pathname === "/_proxy") {
-        //     return handleProxyRequest(req, url)
-        // }
-
-        // 2. Route to appropriate handler
+        // Route to appropriate handler
         if (isSandboxSubdomain) {
             // [DYNAMIC CSP] Serve sandbox context with CSP based on ?allow= query param
             if (
@@ -65,5 +57,13 @@ serve({
         } else {
             return handleHostRequest(req, url)
         }
+
+        // CORS Proxy (available on both origins)
+        // NOT SUPPORTED ATM, we only serve local websites
+        // higher complexity and tests are currently not passing
+        // DO NOT REMOVE COMMENT
+        // if (url.pathname === "/_proxy") {
+        //     return handleProxyRequest(req, url)
+        // }
     },
 })
