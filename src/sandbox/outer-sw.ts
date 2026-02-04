@@ -133,15 +133,18 @@ self.addEventListener("activate", (event) => {
     event.waitUntil(self.clients.claim())
 })
 
+// Heartbeat state
+let heartbeatPort: MessagePort | null = null
+
 self.addEventListener("message", (event) => {
-    if (event.data?.type === "SET_NETWORK_RULES") {
+    const data = event.data
+
+    // 1. Handle Rules Update
+    if (data?.type === "SET_NETWORK_RULES") {
         networkRules = {
-            allow: event.data.rules?.allow ?? [],
-            allowProtocols: event.data.rules?.allowProtocols ?? [
-                "http",
-                "https",
-            ],
-            allowMethods: event.data.rules?.allowMethods ?? [
+            allow: data.rules?.allow ?? [],
+            allowProtocols: data.rules?.allowProtocols ?? ["http", "https"],
+            allowMethods: data.rules?.allowMethods ?? [
                 "GET",
                 "POST",
                 "PUT",
@@ -150,11 +153,31 @@ self.addEventListener("message", (event) => {
                 "HEAD",
                 "OPTIONS",
             ],
-            maxContentLength: event.data.rules?.maxContentLength ?? undefined,
-            proxyUrl: event.data.rules?.proxyUrl ?? undefined,
-            files: event.data.rules?.files ?? {},
-            cacheStrategy: event.data.rules?.cacheStrategy ?? "network-first",
+            maxContentLength: data.rules?.maxContentLength ?? undefined,
+            proxyUrl: data.rules?.proxyUrl ?? undefined,
+            files: data.rules?.files ?? {},
+            cacheStrategy: data.rules?.cacheStrategy ?? "network-first",
         }
+
+        // Notify clients that rules are applied
+        ipc.send("log", "system", "Network rules applied.", {
+            rules: networkRules,
+        })
+    }
+
+    // 2. Handle Heartbeat Port Registration
+    if (data && data.type === "REGISTER_HEARTBEAT_PORT" && event.ports[0]) {
+        heartbeatPort = event.ports[0]
+
+        // Listen for PING
+        heartbeatPort.onmessage = (e) => {
+            if (e.data === "PING") {
+                heartbeatPort?.postMessage("PONG")
+            }
+        }
+
+        // Notify host we are ready
+        heartbeatPort.postMessage("SW_HEARTBEAT_CONNECTED")
     }
 })
 
@@ -182,6 +205,32 @@ self.addEventListener("fetch", (event) => {
 
             // 2. Same-Origin (Cache)
             if (sameOrigin) {
+                // Special handling for inner-frame.html to inject CSP headers (immutable security)
+                if (url.pathname.endsWith("/inner-frame.html")) {
+                    const response = await (async () => {
+                        const cached = await caches.match(event.request)
+                        if (cached) return cached
+                        return fetch(event.request)
+                    })()
+
+                    const newHeaders = new Headers(response.headers)
+                    // SECURITY CSP:
+                    // connect-src http: https: -> Allows standard HTTP/S (intercepted by SW).
+                    //                             BLOCKS ws: wss: (WebSockets) and WebRTC.
+                    // img-src * data: blob:    -> Allows images (intercepted by SW firewall).
+                    // frame-src 'none'         -> BLOCKS child iframes (prevents escaping to fresh context).
+                    newHeaders.set(
+                        "Content-Security-Policy",
+                        "connect-src http: https:; img-src * data: blob:; frame-src 'none'; default-src * 'unsafe-inline' 'unsafe-eval';",
+                    )
+
+                    return new Response(response.body, {
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: newHeaders,
+                    })
+                }
+
                 const strategy = networkRules.cacheStrategy ?? "network-first"
                 if (strategy === "cache-first") {
                     const cached = await caches.match(event.request)

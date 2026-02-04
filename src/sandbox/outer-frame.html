@@ -62,6 +62,68 @@
                         window.parent.postMessage(event.data, HOST_ORIGIN);
                     }
                 });
+
+                // --- SECURITY HARDENING (Defense Trio) ---
+                
+                // 1. Monkey-Patch register/unregister to prevent tampering
+                try {
+                    // Save original references if we need them (but we assume setup is done)
+                    // Block unregister
+                    const ServiceWorkerRegistrationProto = ServiceWorkerRegistration.prototype;
+                    ServiceWorkerRegistrationProto.unregister = function() {
+                        console.warn("[Sandbox] Blocked attempt to unregister Service Worker");
+                        return Promise.reject(new Error("Blocked by Sandbox"));
+                    };
+                    Object.freeze(ServiceWorkerRegistrationProto);
+
+                    // Block new registrations
+                    const ServiceWorkerContainerProto = ServiceWorkerContainer.prototype;
+                    const originalRegister = ServiceWorkerContainerProto.register;
+                    ServiceWorkerContainerProto.register = function(url, options) {
+                        // Allow only our authorized SW
+                        if (url && (url === '/outer-sw.js' || url.endsWith('/outer-sw.js'))) {
+                            return originalRegister.apply(this, arguments);
+                        }
+                        console.warn("[Sandbox] Blocked attempt to register unauthorized Service Worker:", url);
+                        return Promise.reject(new Error("Blocked by Sandbox"));
+                    };
+                    Object.freeze(ServiceWorkerContainerProto);
+                } catch(e) {
+                    console.error("[Sandbox] Failed to apply SW monkey-patches", e);
+                }
+
+                // 2. Freeze key globals to prevent prototype poisoning
+                // (Note: aggressive freezing can break libs, but safe for outer-frame which runs no user code)
+                try {
+                    Object.freeze(navigator.serviceWorker);
+                    // We can't easily freeze window.parent, but we locked the API.
+                } catch(e) { /* ignore */ }
+
+                // 3. MutationObserver to allow ONLY our inner-frame
+                // This prevents attackers from spawning new clean iframes to bypass our monkey-patches
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach(m => {
+                        m.addedNodes.forEach(node => {
+                            if (node.tagName === 'IFRAME' && node.id !== 'inner') {
+                                console.warn("[Sandbox] Blocked unauthorized iframe creation");
+                                node.remove();
+                            }
+                        });
+                    });
+                });
+                observer.observe(document, { childList: true, subtree: true });
+                
+                // Also proxy createElement to throw early (faster feedback)
+                const originalCreateElement = document.createElement;
+                document.createElement = function(tagName, options) {
+                    if (tagName && tagName.toLowerCase() === 'iframe') {
+                        console.warn("[Sandbox] Blocked document.createElement('iframe')");
+                        throw new Error("Blocked by Sandbox");
+                    }
+                    return originalCreateElement.apply(this, arguments);
+                };
+                
+                // -----------------------------------------
             } else {
                 sendStatus('SW: not supported', 'error');
             }
@@ -93,6 +155,11 @@
                             innerFrame.sandbox = newSandbox;
                             sendStatus('Sandbox attributes: ' + newSandbox);
                         }
+                    }
+                } else if (data.type === 'REGISTER_HEARTBEAT_PORT') {
+                    if (navigator.serviceWorker.controller && event.ports[0]) {
+                        // Forward the port to the Service Worker
+                        navigator.serviceWorker.controller.postMessage(data, [event.ports[0]]);
                     }
                 } else if (data.type === 'RESET') {
                     navigator.serviceWorker.getRegistrations().then(regs => {

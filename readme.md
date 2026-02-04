@@ -171,9 +171,40 @@ PORT=3333 HOST=localhost bun server.ts
 
 1. **Origin Isolation**: Sandbox on dedicated subdomain, no shared cookies/storage
 2. **Network Firewall**: All external requests blocked unless in allowlist
-3. **CSP Hardening**: Strict policies per origin
+3. **Active Defense Trio (Outer Frame)**:
+    - **Monkey-Patching**: `ServiceWorkerContainer.prototype.unregister` is blocked: we should check why ServiceWorkerContainer.prototype doesn't free.
+      > **Note:** This does not prevent unregistering from a fresh context (Inner Frame), which is why the Heartbeat is critical.
+    - **Freezing**: Critical prototypes are frozen to prevent poisoning.
+    - **MutationObserver**: Deletes any unauthorized iframes spawned by the user.
+4.  **Secure Heartbeat (Kill Switch)**:
+    - Host maintains a `MessageChannel` to SW.
+    - Pings every **2000ms** (tolerates 5 misses).
+    - Checks SW health; if dead, resets entire sandbox.
+5.  **CSP Hardening**: Strict policies per origin (`frame-src 'self'`).
+6.  **Exfiltration Channel Blocking (Inner Frame)**:
+    - **Method**: Strict CSP Headers injected by Service Worker (`connect-src http: https:`).
+    - **Effect**: Blocks `WebSocket`, `WebRTC`, and Child Iframes (`frame-src 'none'`) at the network level.
+    - **Why Headers?**: Immutable. User code cannot modify headers, unlike `<meta>` tags.
+
+### Testing Status
+> [!NOTE]
+> Advanced security features (Heartbeat, Exfiltration Blocking) have been **manually verified**.
+> Automated tests for these specific features (e.g. `heartbeat-attack.spec.ts`) are currently skipped due to CI timing flakiness.
+> **Next Step:** Implement robust automated regression tests for CSP enforcement and Heartbeat logic.
+
+The fundamental risk comes from `allow-same-origin` on the inner iframe. This allows the user code to reach the outer frame (`window.parent`) and the shared Service Worker Scope.
+
+**The "Unregister Attack":**
+1.  Malicious code calls `window.parent.navigator.serviceWorker.getRegistrations()`.
+2.  It calls `unregister()` on the firewall Service Worker.
+3.  The Service Worker dies.
+4.  Subsequent network requests go directly to the internet (bypassing our Allowlist).
+
+**Our Defense:**
+Since we cannot prevent the browser from respecting `unregister()` called from a fresh Realm (Inner Frame), we rely on the **Heartbeat Kill Switch**. If the Service Worker disappears, the Host detects the lost pulse and nukes the sandbox immediately.
 
 ## Future Work
+- is it true that service worker only works on HTTPS / localhost, not for HTTP / ws or other types ?
 - postMessage: Do a comphrensive analysis of the whole codebase if we replace this with MessageChannel and the security impact
 - is the sandbox server safe from request of other origins? eg can other origins/website use our sandbox subdomain for their own CSP or does it block all request from other sources ?
 - [ ] **WebSocket Support**: Intercept and filter WS connections

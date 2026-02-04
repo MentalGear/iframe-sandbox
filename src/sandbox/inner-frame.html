@@ -42,6 +42,29 @@
             return result;
         }
 
+        // SECURITY: Block Exfiltration Channels
+        // These APIs allow bypassing the Service Worker Firewall, so we disable them.
+        (function() {
+            const blockedApis = [
+                'WebSocket', 'SharedWorker', 'Worker', 
+                'RTCPeerConnection', 'RTCDataChannel', 'mozRTCPeerConnection', 'webkitRTCPeerConnection'
+            ];
+            
+            blockedApis.forEach(api => {
+                if (window[api]) {
+                    try {
+                        const BlockedConstructor = function() {
+                            throw new Error(`Security Error: ${api} is blocked by sandbox policy.`);
+                        };
+                        // Attempt to mimic prototype to avoid immediate detection? No, safety first.
+                        window[api] = BlockedConstructor;
+                    } catch(e) {
+                         // Ignore if restricted
+                    }
+                }
+            });
+        })();
+
         // Create log message in unified schema
         function createLogMessage(level, message, data = {}) {
             return {

@@ -29,7 +29,7 @@ export interface LogMessage {
     timestamp: number
     source: "outer" | "inner"
     level: "log" | "warn" | "error"
-    area?: "network" | "security" | "user-code"
+    area?: "network" | "security" | "user-code" | "system"
     message: string
     data?: Record<string, unknown>
 }

@@ -487,4 +487,68 @@ test.describe("Security Isolation", () => {
             /FAIL: Could read iframe content/,
         )
     })
+
+    test("Defense Trio hardening checks", async ({ page }) => {
+        await page.goto("/")
+        await expect(page.locator("#sandbox-status")).toContainText("Ready")
+
+        await page.click('button:has-text("Clear Logs")')
+        await page.locator("#code").fill(`
+            // 1. Try to unregister SW via window.parent
+            if (window.parent.navigator.serviceWorker) {
+               window.parent.navigator.serviceWorker.getRegistrations()
+               .then(regs => {
+                    if(regs.length === 0) console.log("FAIL: No regs found");
+                    regs.forEach(r => {
+                        r.unregister()
+                        .then(() => console.log("FAIL: Unregister succeeded"))
+                        .catch(e => console.log("PASS: Unregister blocked (" + e.message + ")"));
+                    });
+               });
+            } else {
+                console.log("FAIL: parent.navigator.serviceWorker not found");
+            }
+
+            // 2. Try to register new SW
+            window.parent.navigator.serviceWorker.register('/fake-sw.js')
+            .then(() => console.log("FAIL: Register succeeded"))
+            .catch(e => console.log("PASS: Register blocked (" + e.message + ")"));
+
+            // 3. Try to spawn iframe in outer-frame
+            try {
+               const f = window.parent.document.createElement('iframe');
+               f.src = 'about:blank';
+               window.parent.document.body.appendChild(f);
+               
+               setTimeout(() => {
+                   if (window.parent.document.body.contains(f)) {
+                       console.log("FAIL: Iframe persists in outer frame");
+                   } else {
+                       console.log("PASS: Iframe removed/blocked from outer frame");
+                   }
+               }, 500);
+            } catch(e) {
+               console.log("PASS: Iframe creation blocked (" + e.message + ")");
+            }
+        `)
+        await page.click('button:has-text("Run Code")')
+
+        // Wait for results
+        await page.waitForTimeout(1000)
+
+        // Check 1: SW Unregister
+        await expect(page.locator("#logs")).toContainText(
+            /PASS: Unregister blocked/,
+        )
+
+        // Check 2: SW Register
+        await expect(page.locator("#logs")).toContainText(
+            /PASS: Register.*blocked/,
+        )
+
+        // Check 3: Iframe Blocking
+        await expect(page.locator("#logs")).toContainText(
+            /PASS: Iframe.*blocked/,
+        )
+    })
 })

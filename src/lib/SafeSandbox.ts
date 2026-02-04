@@ -10,6 +10,12 @@ class SafeSandbox extends HTMLElement {
     private _networkRules: NetworkRules
     private _sandboxOrigin: string
 
+    // Heartbeat / Kill Switch
+    private _heartbeatChannel: MessageChannel | null = null
+    private _heartbeatIntervalId: any = null
+    private _heartbeatFailures = 0
+    private _isResetting = false
+
     static get observedAttributes(): string[] {
         return ["sandbox-origin", "src"]
     }
@@ -37,6 +43,7 @@ class SafeSandbox extends HTMLElement {
 
     disconnectedCallback(): void {
         window.removeEventListener("message", this._onMessage)
+        this._stopHeartbeat()
     }
 
     attributeChangedCallback(
@@ -111,6 +118,91 @@ class SafeSandbox extends HTMLElement {
         }
     }
 
+    /**
+     * Resets the sandbox by destroying and recreating the iframe.
+     * This is the "Kill Switch" measure if SW health check fails.
+     */
+    reset(): void {
+        if (this._isResetting) return
+        this._isResetting = true
+        console.warn(
+            "[SafeSandbox] Resetting sandbox due to security/health failure.",
+        )
+
+        // Stop heartbeat
+        this._stopHeartbeat()
+
+        // Nuke iframe
+        this._iframe.remove()
+
+        // Recreate iframe
+        this._iframe = document.createElement("iframe")
+        this._iframe.style.width = "100%"
+        this._iframe.style.height = "100%"
+        this._iframe.style.border = "none"
+        this.shadowRoot!.appendChild(this._iframe)
+
+        // Reload
+        setTimeout(() => {
+            this._isResetting = false
+            this._updateIframeSource()
+        }, 100)
+    }
+
+    private _stopHeartbeat() {
+        if (this._heartbeatIntervalId) clearInterval(this._heartbeatIntervalId)
+        if (this._heartbeatChannel) {
+            this._heartbeatChannel.port1.close()
+            this._heartbeatChannel.port2.close()
+        }
+        this._heartbeatChannel = null
+        this._heartbeatIntervalId = null
+    }
+
+    private _startHeartbeat() {
+        this._stopHeartbeat()
+
+        this._heartbeatChannel = new MessageChannel()
+        this._heartbeatFailures = 0
+
+        // Send Port2 to Outer Frame
+        this._iframe.contentWindow?.postMessage(
+            { type: "REGISTER_HEARTBEAT_PORT" },
+            this._sandboxOrigin,
+            [this._heartbeatChannel.port2],
+        )
+
+        // Listen on Port1
+        let pendingPing = false
+        this._heartbeatChannel.port1.onmessage = (e) => {
+            if (e.data === "PONG") {
+                pendingPing = false
+                this._heartbeatFailures = 0
+            } else if (e.data === "SW_HEARTBEAT_CONNECTED") {
+                console.log("[SafeSandbox] Secure Heartbeat Established 🔒")
+            }
+        }
+
+        // Start Loop (1s)
+        this._heartbeatIntervalId = setInterval(() => {
+            if (pendingPing) {
+                this._heartbeatFailures++
+                console.warn(
+                    `[SafeSandbox] Heartbeat missed (${this._heartbeatFailures}/3)`,
+                )
+                if (this._heartbeatFailures >= 5) {
+                    this.reset()
+                    return
+                }
+            }
+
+            pendingPing = true
+            this._heartbeatChannel?.port1.postMessage("PING")
+
+            // Failsafe: if 'pendingPing' is still true after 2s, we count as miss in next tick
+        }, 2000)
+    }
+
     private _onMessage(event: MessageEvent): void {
         if (!this._sandboxOrigin) return
         if (event.origin !== this._sandboxOrigin) return
@@ -121,6 +213,7 @@ class SafeSandbox extends HTMLElement {
         if (data === "READY") {
             this.dispatchEvent(new CustomEvent("ready"))
             this._sendNetworkRules()
+            this._startHeartbeat()
         } else if (data.type === "LOG") {
             this.dispatchEvent(
                 new CustomEvent<LogMessage>("log", { detail: data }),
