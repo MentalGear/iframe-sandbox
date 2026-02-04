@@ -283,4 +283,36 @@ setTimeout(() => {
     }
 }, 2000);`,
     },
+    securityResearch: {
+        id: "securityResearch",
+        label: "🛡️ Security Research Target",
+        rules: {
+            allow: [], // Strict networking by default
+            scriptUnsafe: true, // Needs to run the harness scripts
+        },
+        code: `// Load security research harness
+console.log("Loading security research target...");
+
+const hostOrigin = window.location.origin.replace("sandbox.", "");
+const pageUrl = hostOrigin + "/playground/security-research.html";
+
+fetch(pageUrl)
+  .then(r => r.text())
+  .then(html => {
+    // Replace content surgically
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    
+    document.body.innerHTML = doc.body.innerHTML;
+    
+    // Execute harness scripts
+    doc.querySelectorAll('script').forEach(oldScript => {
+        const newScript = document.createElement('script');
+        Array.from(oldScript.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+        newScript.textContent = oldScript.textContent;
+        document.body.appendChild(newScript);
+    });
+  })
+  .catch(err => console.error("Failed to load harness:", err));`,
+    },
 }
